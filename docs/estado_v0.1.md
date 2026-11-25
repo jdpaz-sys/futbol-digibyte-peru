@@ -17,6 +17,7 @@
 - Repositorio clonado limpio desde `https://github.com/jdpaz-sys/futbol-digibyte-peru.git` (rama `main` sin commits previos).
 - SRS v0.1 archivado como fuente única y sintetizado operativamente sin generar archivos de código prematuros.
 - Arquitectura desacoplada cerrada sin proxies en Next.js y con garantía anticolisión en PostgreSQL (`EXCLUDE USING gist`).
+- Ajuste previo a Fase 1A incorporado en `develop`: catálogo de planes SaaS configurables (`MENSUAL`, `ANUAL` y `PRUEBA`) con trazabilidad de pagos/renovaciones del Super Admin.
 
 ## Siguiente Paso Exacto (Fase 1)
 

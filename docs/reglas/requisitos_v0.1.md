@@ -7,7 +7,7 @@ Fuente de verdad: `docs/srs/SRS - APK Móvil Fútbol - Digibyte Perú (v0.1).pdf
 | Rol | Acceso | Responsabilidades clave |
 |---|---|---|
 | **Super Administrador** (Digibyte Perú) | Panel central | Alta de complejos, planes, suscripciones (`PRUEBA`, `ACTIVA`, `VENCIDA`, `SUSPENDIDA`) y métricas globales. No interviene en fondos de reservas. |
-| **Cliente SaaS / Dueño** (Tenant) | Suscripción mensual | Autogestiona perfil, canchas, ubicación por coordenadas, horarios, tarifas, promociones, términos, medios de cobro, validación manual, reservas externas, *check-in* y reportes. |
+| **Cliente SaaS / Dueño** (Tenant) | Suscripción mensual o anual | Autogestiona perfil, canchas, ubicación por coordenadas, horarios, tarifas, promociones, términos, medios de cobro, validación manual, reservas externas, *check-in* y reportes. |
 | **Usuario Final / Jugador** | Gratuito (móvil/PWA) | Explora complejos cercanos, consulta disponibilidad en vivo, reserva y paga adelanto directo, recibe QR y sigue cercanía/ETA al complejo. |
 
 **5 Pilares del Dueño:** (1) Perfil, infraestructura y ubicación por coordenadas; (2) Horarios y tarifas dinámicas por franja; (3) Términos, adelanto y cancelación propios; (4) Métodos de cobro propios (Yape/Plin, banco o pasarela directa); (5) Promociones y horas muertas.
@@ -116,3 +116,4 @@ Fuente de verdad: `docs/srs/SRS - APK Móvil Fútbol - Digibyte Perú (v0.1).pdf
 4. **Reprogramación:** se mantienen los 8 estados exactos; reprogramar actualiza rango/cancha en la misma reserva, registra auditoría y recalcula `saldo_pendiente` conservando el adelanto pagado.
 5. **Autenticación del jugador:** exploración y consulta de horarios 100% pública/anónima; registro/login al reservar con correo, contraseña, nombre y celular (WhatsApp).
 6. **Notificaciones MVP:** bandeja in-app + Web Push PWA + correo electrónico de respaldo (sin SMS en MVP).
+7. **Catálogo de planes SaaS (amplía RF-01 y RF-02):** el Super Admin gestiona planes configurables (`nombre`, `periodicidad`: `MENSUAL` | `ANUAL` | `PRUEBA`, `duración`, `precio`, `activo`) asignables a complejos, con trazabilidad de pagos y renovaciones de suscripción.

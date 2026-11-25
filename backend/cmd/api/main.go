@@ -22,6 +22,7 @@ import (
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/db"
 	apphttp "github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/http"
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/auth"
+	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/complejos"
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/suscripciones"
 )
 
@@ -80,16 +81,28 @@ func run() error {
 	suscripcionesService := suscripciones.NewService(suscripcionesRepo, metricasCache)
 	suscripcionesHandler := suscripciones.NewHandler(suscripcionesService, logger)
 
+	credentialsCipher, err := db.NewCredentialsCipher(cfg.CredentialsEncryptionKey)
+	if err != nil {
+		return err
+	}
+	complejosRepo := complejos.NewRepository(pgPool)
+	complejosService := complejos.NewService(complejosRepo, credentialsCipher)
+	complejosHandler := complejos.NewHandler(complejosService, logger)
+
 	router := apphttp.NewRouter(apphttp.RouterConfig{
 		CORSAllowedOrigins: cfg.CORSAllowedOrigins,
 		Logger:             logger,
 		HealthHandler:      healthHandler,
 		TokenParser:        authService.ParseAccessToken,
+		TenantChecker:      apphttp.NewPostgresTenantChecker(pgPool),
 		MountV1: func(v1 chi.Router) {
 			authHandler.RegisterRoutes(v1)
 		},
 		MountAdmin: func(admin chi.Router) {
 			suscripcionesHandler.RegisterAdminRoutes(admin)
+		},
+		MountDueno: func(dueno chi.Router) {
+			complejosHandler.RegisterDuenoRoutes(dueno)
 		},
 	})
 

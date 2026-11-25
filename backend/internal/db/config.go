@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -11,22 +12,27 @@ import (
 	"github.com/joho/godotenv"
 )
 
-const minJWTSecretLength = 32
+const (
+	minJWTSecretLength                = 32
+	credentialsEncryptionKeyBytes     = 32
+	credentialsEncryptionKeyHexLength = credentialsEncryptionKeyBytes * 2
+)
 
 // Config centraliza la configuración validada del backend Go.
 type Config struct {
-	AppEnv             string
-	Port               string
-	DatabaseURL        string
-	DBMaxConns         int32
-	DBMinConns         int32
-	ValkeyAddr         string
-	ValkeyPassword     string
-	ValkeyDB           int
-	JWTSecret          string
-	JWTAccessTTL       time.Duration
-	JWTRefreshTTL      time.Duration
-	CORSAllowedOrigins []string
+	AppEnv                   string
+	Port                     string
+	DatabaseURL              string
+	DBMaxConns               int32
+	DBMinConns               int32
+	ValkeyAddr               string
+	ValkeyPassword           string
+	ValkeyDB                 int
+	JWTSecret                string
+	JWTAccessTTL             time.Duration
+	JWTRefreshTTL            time.Duration
+	CredentialsEncryptionKey []byte
+	CORSAllowedOrigins       []string
 }
 
 // LoadConfig carga opcionalmente un archivo .env local y valida estrictamente
@@ -95,6 +101,21 @@ func LoadConfig() (Config, error) {
 		errs = append(errs, "JWT_REFRESH_TTL debe ser una duración válida mayor a 0 (ej. 168h)")
 	}
 
+	rawEncKey := strings.TrimSpace(os.Getenv("CREDENTIALS_ENCRYPTION_KEY"))
+	var credentialsEncryptionKey []byte
+	if rawEncKey == "" {
+		errs = append(errs, "CREDENTIALS_ENCRYPTION_KEY es obligatoria")
+	} else if len(rawEncKey) != credentialsEncryptionKeyHexLength {
+		errs = append(errs, fmt.Sprintf("CREDENTIALS_ENCRYPTION_KEY debe tener exactamente %d caracteres hexadecimales (32 bytes)", credentialsEncryptionKeyHexLength))
+	} else {
+		decoded, decodeErr := hex.DecodeString(rawEncKey)
+		if decodeErr != nil || len(decoded) != credentialsEncryptionKeyBytes {
+			errs = append(errs, "CREDENTIALS_ENCRYPTION_KEY debe ser una cadena hexadecimal válida de 32 bytes (64 caracteres)")
+		} else {
+			credentialsEncryptionKey = decoded
+		}
+	}
+
 	corsOrigins := parseCSVEnv("CORS_ALLOWED_ORIGINS", []string{"http://localhost:3000"})
 	if len(corsOrigins) == 0 {
 		errs = append(errs, "CORS_ALLOWED_ORIGINS debe incluir al menos un origen permitido")
@@ -105,18 +126,19 @@ func LoadConfig() (Config, error) {
 	}
 
 	return Config{
-		AppEnv:             appEnv,
-		Port:               port,
-		DatabaseURL:        databaseURL,
-		DBMaxConns:         int32(dbMaxConns),
-		DBMinConns:         int32(dbMinConns),
-		ValkeyAddr:         valkeyAddr,
-		ValkeyPassword:     valkeyPassword,
-		ValkeyDB:           valkeyDB,
-		JWTSecret:          jwtSecret,
-		JWTAccessTTL:       accessTTL,
-		JWTRefreshTTL:      refreshTTL,
-		CORSAllowedOrigins: corsOrigins,
+		AppEnv:                   appEnv,
+		Port:                     port,
+		DatabaseURL:              databaseURL,
+		DBMaxConns:               int32(dbMaxConns),
+		DBMinConns:               int32(dbMinConns),
+		ValkeyAddr:               valkeyAddr,
+		ValkeyPassword:           valkeyPassword,
+		ValkeyDB:                 valkeyDB,
+		JWTSecret:                jwtSecret,
+		JWTAccessTTL:             accessTTL,
+		JWTRefreshTTL:            refreshTTL,
+		CredentialsEncryptionKey: credentialsEncryptionKey,
+		CORSAllowedOrigins:       corsOrigins,
 	}, nil
 }
 

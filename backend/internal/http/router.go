@@ -46,8 +46,10 @@ type RouterConfig struct {
 	Logger             *slog.Logger
 	HealthHandler      http.HandlerFunc
 	TokenParser        TokenParser
+	TenantChecker      TenantOwnershipChecker
 	MountV1            func(r chi.Router)
 	MountAdmin         func(r chi.Router)
+	MountDueno         func(r chi.Router)
 }
 
 // NewRouter construye el router chi/v5 con middlewares globales y prefijo /api/v1.
@@ -93,6 +95,14 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 				admin.Use(RequireAuth(cfg.TokenParser))
 				admin.Use(RequireRole(RoleSuperAdmin))
 				cfg.MountAdmin(admin)
+			})
+		}
+		if cfg.MountDueno != nil {
+			v1.Route("/dueno", func(dueno chi.Router) {
+				dueno.Use(RequireAuth(cfg.TokenParser))
+				dueno.Use(RequireRole(RoleDueno))
+				dueno.Use(RequireTenant(cfg.TenantChecker))
+				cfg.MountDueno(dueno)
 			})
 		}
 	})

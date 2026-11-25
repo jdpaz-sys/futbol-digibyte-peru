@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -33,6 +34,8 @@ type Config struct {
 	JWTRefreshTTL            time.Duration
 	CredentialsEncryptionKey []byte
 	CORSAllowedOrigins       []string
+	GeocoderBaseURL          string
+	GeocoderUserAgent        string
 }
 
 // LoadConfig carga opcionalmente un archivo .env local y valida estrictamente
@@ -121,6 +124,13 @@ func LoadConfig() (Config, error) {
 		errs = append(errs, "CORS_ALLOWED_ORIGINS debe incluir al menos un origen permitido")
 	}
 
+	geocoderBaseURL := strings.TrimRight(getEnvOrDefault("GEOCODER_BASE_URL", "https://nominatim.openstreetmap.org"), "/")
+	if parsedGeoURL, urlErr := url.Parse(geocoderBaseURL); urlErr != nil || (parsedGeoURL.Scheme != "http" && parsedGeoURL.Scheme != "https") || parsedGeoURL.Host == "" {
+		errs = append(errs, "GEOCODER_BASE_URL debe ser una URL HTTP/HTTPS válida")
+	}
+
+	geocoderUserAgent := getEnvOrDefault("GEOCODER_USER_AGENT", "FutbolDigibytePeru/1.0")
+
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("configuración inválida:\n - %s", strings.Join(errs, "\n - "))
 	}
@@ -139,6 +149,8 @@ func LoadConfig() (Config, error) {
 		JWTRefreshTTL:            refreshTTL,
 		CredentialsEncryptionKey: credentialsEncryptionKey,
 		CORSAllowedOrigins:       corsOrigins,
+		GeocoderBaseURL:          geocoderBaseURL,
+		GeocoderUserAgent:        geocoderUserAgent,
 	}, nil
 }
 

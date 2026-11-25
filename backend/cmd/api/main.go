@@ -23,6 +23,7 @@ import (
 	apphttp "github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/http"
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/auth"
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/complejos"
+	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/geo"
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/suscripciones"
 )
 
@@ -89,6 +90,15 @@ func run() error {
 	complejosService := complejos.NewService(complejosRepo, credentialsCipher)
 	complejosHandler := complejos.NewHandler(complejosService, logger)
 
+	geoRepo := geo.NewRepository(pgPool)
+	geoCache := geo.NewValkeyCache(valkeyClient)
+	geoService := geo.NewService(geoRepo, geoCache, geo.ServiceConfig{
+		GeocoderBaseURL:   cfg.GeocoderBaseURL,
+		GeocoderUserAgent: cfg.GeocoderUserAgent,
+		Logger:            logger,
+	})
+	geoHandler := geo.NewHandler(geoService, rateLimiter, logger)
+
 	router := apphttp.NewRouter(apphttp.RouterConfig{
 		CORSAllowedOrigins: cfg.CORSAllowedOrigins,
 		Logger:             logger,
@@ -98,11 +108,15 @@ func run() error {
 		MountV1: func(v1 chi.Router) {
 			authHandler.RegisterRoutes(v1)
 		},
+		MountPublic: func(public chi.Router) {
+			geoHandler.RegisterPublicRoutes(public)
+		},
 		MountAdmin: func(admin chi.Router) {
 			suscripcionesHandler.RegisterAdminRoutes(admin)
 		},
 		MountDueno: func(dueno chi.Router) {
 			complejosHandler.RegisterDuenoRoutes(dueno)
+			geoHandler.RegisterDuenoRoutes(dueno)
 		},
 	})
 

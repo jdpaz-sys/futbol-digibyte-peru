@@ -48,6 +48,7 @@ type RouterConfig struct {
 	TokenParser        TokenParser
 	TenantChecker      TenantOwnershipChecker
 	MountV1            func(r chi.Router)
+	MountPublic        func(r chi.Router)
 	MountAdmin         func(r chi.Router)
 	MountDueno         func(r chi.Router)
 }
@@ -89,6 +90,11 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 		}
 		if cfg.MountV1 != nil {
 			cfg.MountV1(v1)
+		}
+		if cfg.MountPublic != nil {
+			v1.Route("/public", func(public chi.Router) {
+				cfg.MountPublic(public)
+			})
 		}
 		if cfg.MountAdmin != nil {
 			v1.Route("/admin", func(admin chi.Router) {

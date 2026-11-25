@@ -45,7 +45,9 @@ type RouterConfig struct {
 	CORSAllowedOrigins []string
 	Logger             *slog.Logger
 	HealthHandler      http.HandlerFunc
+	TokenParser        TokenParser
 	MountV1            func(r chi.Router)
+	MountAdmin         func(r chi.Router)
 }
 
 // NewRouter construye el router chi/v5 con middlewares globales y prefijo /api/v1.
@@ -85,6 +87,13 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 		}
 		if cfg.MountV1 != nil {
 			cfg.MountV1(v1)
+		}
+		if cfg.MountAdmin != nil {
+			v1.Route("/admin", func(admin chi.Router) {
+				admin.Use(RequireAuth(cfg.TokenParser))
+				admin.Use(RequireRole(RoleSuperAdmin))
+				cfg.MountAdmin(admin)
+			})
 		}
 	})
 

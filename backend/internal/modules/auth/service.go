@@ -140,7 +140,7 @@ func (s *Service) Register(ctx context.Context, req RegisterRequest) (UserProfil
 	if !ValidateEmail(email) {
 		fields["email"] = "Ingresa un correo electrónico válido"
 	}
-	if errMsg := validatePassword(req.Password); errMsg != "" {
+	if errMsg := ValidatePassword(req.Password); errMsg != "" {
 		fields["password"] = errMsg
 	}
 	if len([]rune(nombre)) < 2 || len([]rune(nombre)) > 150 {
@@ -527,7 +527,8 @@ func ValidatePhone(phone string) bool {
 	return digits >= 7 && digits <= 15
 }
 
-func validatePassword(password string) string {
+// ValidatePassword valida las reglas mínimas de longitud y contenido para contraseñas.
+func ValidatePassword(password string) string {
 	if len(password) < minPasswordLength {
 		return fmt.Sprintf("La contraseña debe tener al menos %d caracteres", minPasswordLength)
 	}

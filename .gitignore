@@ -1,0 +1,34 @@
+# Entornos y secretos
+.env
+.env.*
+!.env.example
+
+# Sistema operativo y editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Backend (Go)
+/backend/bin/
+/backend/tmp/
+*.exe
+*.test
+*.out
+coverage.out
+
+# Frontend (Next.js / pnpm)
+node_modules/
+.next/
+out/
+.pnpm-store/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Infraestructura y volúmenes locales
+infra/data/
+*.log

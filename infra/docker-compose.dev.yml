@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: futbol-digibyte-postgres
+    restart: unless-stopped
+    mem_limit: 512m
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: America/Lima
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - max_connections=50
+      - -c
+      - timezone=America/Lima
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: futbol-digibyte-valkey
+    restart: unless-stopped
+    mem_limit: 256m
+    ports:
+      - "127.0.0.1:${VALKEY_PORT:-6379}:6379"
+    environment:
+      TZ: America/Lima
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD}
+    command:
+      - sh
+      - -c
+      - 'exec valkey-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save "" --appendonly no --requirepass "$$VALKEY_PASSWORD"'
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${VALKEY_PASSWORD}\" valkey-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  postgres_data:
+    name: futbol_digibyte_pgdata

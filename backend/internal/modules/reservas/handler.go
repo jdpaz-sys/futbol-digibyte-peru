@@ -59,11 +59,18 @@ func (h *Handler) RegisterJugadorRoutes(jugador chi.Router) {
 	jugador.Post("/reservas/{reservaID}/comprobante", h.handleUploadComprobante)
 	jugador.Get("/reservas", h.handleListJugadorReservas)
 	jugador.Get("/reservas/{reservaID}", h.handleGetJugadorReservaDetail)
+	jugador.Post("/reservas/{reservaID}/cancelar", h.handleCancelReservaJugador)
+	jugador.Post("/reservas/{reservaID}/reprogramar", h.handleReprogramarJugador)
 }
 
 // RegisterAuthenticatedRoutes monta rutas protegidas únicamente con RequireAuth (múltiples roles con validación por recurso).
 func (h *Handler) RegisterAuthenticatedRoutes(authed chi.Router) {
 	authed.Get("/comprobantes/{comprobanteID}/evidencia", h.handleGetComprobanteEvidencia)
+	authed.Get("/notificaciones", h.handleListNotificaciones)
+	authed.Patch("/notificaciones/{notificacionID}/leer", h.handleMarkNotificacionLeida)
+	authed.Post("/notificaciones/leer-todas", h.handleMarkAllNotificacionesLeidas)
+	authed.Post("/push-subscriptions", h.handleUpsertPushSubscription)
+	authed.Delete("/push-subscriptions", h.handleDeletePushSubscription)
 }
 
 func (h *Handler) handleGetDisponibilidad(w http.ResponseWriter, r *http.Request) {
@@ -409,6 +416,12 @@ func (h *Handler) writeServiceError(w http.ResponseWriter, r *http.Request, even
 		apphttp.WriteError(w, http.StatusConflict, "HOLD_EXPIRED", err.Error())
 	case errors.Is(err, ErrInvalidReservaState):
 		apphttp.WriteError(w, http.StatusConflict, "INVALID_RESERVA_STATE", err.Error())
+	case errors.Is(err, ErrInvalidReservaOrigen):
+		apphttp.WriteError(w, http.StatusUnprocessableEntity, "INVALID_RESERVA_ORIGEN", err.Error())
+	case errors.Is(err, ErrCancellationWindowExpired):
+		apphttp.WriteError(w, http.StatusUnprocessableEntity, "CANCELLATION_WINDOW_EXPIRED", err.Error())
+	case errors.Is(err, ErrReembolsoNoPendiente):
+		apphttp.WriteError(w, http.StatusConflict, "REEMBOLSO_NO_PENDIENTE", err.Error())
 	case errors.Is(err, ErrMetodoPagoNotFound):
 		apphttp.WriteError(w, http.StatusNotFound, "METODO_PAGO_NOT_FOUND", err.Error())
 	case errors.Is(err, ErrMetodoPagoNoManual):
@@ -423,6 +436,10 @@ func (h *Handler) writeServiceError(w http.ResponseWriter, r *http.Request, even
 		apphttp.WriteError(w, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE", err.Error())
 	case errors.Is(err, ErrInvalidFileType):
 		apphttp.WriteError(w, http.StatusBadRequest, "INVALID_FILE_TYPE", err.Error())
+	case errors.Is(err, ErrNotificacionNotFound):
+		apphttp.WriteError(w, http.StatusNotFound, "NOTIFICACION_NOT_FOUND", err.Error())
+	case errors.Is(err, ErrPushSubscriptionNotFound):
+		apphttp.WriteError(w, http.StatusNotFound, "PUSH_SUBSCRIPTION_NOT_FOUND", err.Error())
 	case errors.Is(err, context.Canceled):
 		return
 	default:

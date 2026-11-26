@@ -27,46 +27,92 @@ import (
 // ---------- Fake in-memory Store para pruebas unitarias determinísticas ----------
 
 type fakeReservaRecord struct {
-	ID              uuid.UUID
-	ComplejoID      uuid.UUID
-	CanchaID        uuid.UUID
-	JugadorID       uuid.UUID
-	Estado          string
-	Inicio          time.Time
-	Fin             time.Time
-	CuponID         *uuid.UUID
-	PrecioBase      float64
-	MontoDescuento  float64
-	MontoTotal      float64
-	MontoAdelanto   float64
-	SaldoPendiente  float64
-	HoldExpiraAt    *time.Time
-	PorValidarDesde *time.Time
-	CodigoQR        *string
-	CreatedAt       time.Time
+	ID                     uuid.UUID
+	ComplejoID             uuid.UUID
+	CanchaID               uuid.UUID
+	JugadorID              uuid.UUID
+	Origen                 string
+	ClienteExternoNombre   *string
+	ClienteExternoTelefono *string
+	MotivoBloqueo          *string
+	NotasInternas          *string
+	Estado                 string
+	Inicio                 time.Time
+	Fin                    time.Time
+	CuponID                *uuid.UUID
+	PrecioBase             float64
+	MontoDescuento         float64
+	MontoTotal             float64
+	MontoAdelanto          float64
+	SaldoPendiente         float64
+	MetodoPagoSaldo        *string
+	SaldoPagadoAt          *time.Time
+	HoldExpiraAt           *time.Time
+	PorValidarDesde        *time.Time
+	CodigoQR               *string
+	CheckinAt              *time.Time
+	CanceladoAt            *time.Time
+	MotivoCancelacion      *string
+	ReembolsoPendiente     bool
+	ReembolsoResueltoAt    *time.Time
+	ReprogramacionesCount  int16
+	CreatedAt              time.Time
 }
 
 type fakeAuditRecord struct {
-	ReservaID      uuid.UUID
-	Accion         string
-	EstadoAnterior string
-	EstadoNuevo    string
+	ReservaID        uuid.UUID
+	Accion           string
+	EstadoAnterior   string
+	EstadoNuevo      string
+	CanchaAnteriorID *uuid.UUID
+	CanchaNuevaID    *uuid.UUID
+	RangoAnteriorIni *time.Time
+	RangoAnteriorFin *time.Time
+	RangoNuevoIni    *time.Time
+	RangoNuevoFin    *time.Time
+	Motivo           string
+}
+
+type fakeNotifRecord struct {
+	ID         uuid.UUID
+	UsuarioID  uuid.UUID
+	ComplejoID *uuid.UUID
+	ReservaID  *uuid.UUID
+	Tipo       string
+	Titulo     string
+	Mensaje    string
+	LeidaAt    *time.Time
+	CreatedAt  time.Time
+}
+
+type fakePushSubRecord struct {
+	ID        uuid.UUID
+	UsuarioID uuid.UUID
+	Endpoint  string
+	P256dh    string
+	Auth      string
+	UserAgent *string
+	Activa    bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type fakeStore struct {
-	mu           sync.Mutex
-	now          time.Time
-	complejos    map[uuid.UUID]ComplejoContext
-	canchas      map[uuid.UUID]CanchaInfo
-	horarios     map[int16]*HorarioAtencion
-	tarifas      []TarifaFranja
-	cupones      map[uuid.UUID]*CuponRecord
-	metodosPago  []MetodoPagoPublico
-	reservas     map[uuid.UUID]*fakeReservaRecord
-	comprobantes map[uuid.UUID]ComprobanteAccessRecord
-	audits       []fakeAuditRecord
-	notifsCount  int
-	failCompTx   error
+	mu            sync.Mutex
+	now           time.Time
+	complejos     map[uuid.UUID]ComplejoContext
+	canchas       map[uuid.UUID]CanchaInfo
+	horarios      map[int16]*HorarioAtencion
+	tarifas       []TarifaFranja
+	cupones       map[uuid.UUID]*CuponRecord
+	metodosPago   []MetodoPagoPublico
+	reservas      map[uuid.UUID]*fakeReservaRecord
+	comprobantes  map[uuid.UUID]ComprobanteAccessRecord
+	audits        []fakeAuditRecord
+	notifs        map[uuid.UUID]*fakeNotifRecord
+	pushSubs      map[string]*fakePushSubRecord
+	notifsCount   int
+	failCompTx    error
 	expireBatches []int
 }
 
@@ -79,6 +125,8 @@ func newFakeStore(now time.Time) *fakeStore {
 		cupones:      make(map[uuid.UUID]*CuponRecord),
 		reservas:     make(map[uuid.UUID]*fakeReservaRecord),
 		comprobantes: make(map[uuid.UUID]ComprobanteAccessRecord),
+		notifs:       make(map[uuid.UUID]*fakeNotifRecord),
+		pushSubs:     make(map[string]*fakePushSubRecord),
 	}
 }
 

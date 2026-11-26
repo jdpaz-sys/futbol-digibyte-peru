@@ -49,6 +49,28 @@ type Store interface {
 	GetJugadorReservaDetail(ctx context.Context, reservaID uuid.UUID) (JugadorReservaDetail, time.Time, error)
 	GetComprobanteAccess(ctx context.Context, comprobanteID uuid.UUID) (ComprobanteAccessRecord, error)
 
+	// Fase 3B — Operación diaria del dueño, cancelaciones y reprogramaciones
+	ListDuenoReservas(ctx context.Context, complejoID uuid.UUID, params DuenoReservasQueryParams) ([]DuenoReservaItem, int, error)
+	AprobarComprobanteTx(ctx context.Context, complejoID, reservaID, duenoUserID uuid.UUID, codigoQR string) (DuenoReservaDetail, error)
+	RechazarComprobanteTx(ctx context.Context, complejoID, reservaID, duenoUserID uuid.UUID, motivo string) (DuenoReservaDetail, error)
+	CreateExternaTx(ctx context.Context, in CreateExternaTxInput) (DuenoReservaDetail, error)
+	CreateBloqueoTx(ctx context.Context, in CreateBloqueoTxInput) (DuenoReservaDetail, error)
+	GetDuenoReservaByQR(ctx context.Context, complejoID uuid.UUID, codigoQR string) (DuenoReservaDetail, error)
+	CheckinReservaTx(ctx context.Context, complejoID, reservaID, duenoUserID uuid.UUID, metodoPagoSaldo string) (DuenoReservaDetail, error)
+	MarkNoShowTx(ctx context.Context, complejoID, reservaID, duenoUserID uuid.UUID, motivo string) (DuenoReservaDetail, error)
+	CancelReservaJugadorTx(ctx context.Context, jugadorID, reservaID uuid.UUID, motivo string) (JugadorReservaDetail, error)
+	CancelReservaDuenoTx(ctx context.Context, complejoID, reservaID, duenoUserID uuid.UUID, motivo string) (DuenoReservaDetail, error)
+	MarkReembolsoResueltoTx(ctx context.Context, complejoID, reservaID, duenoUserID uuid.UUID, motivo string) (DuenoReservaDetail, error)
+	ReprogramarJugadorTx(ctx context.Context, in ReprogramarTxInput) (JugadorReservaDetail, error)
+	ReprogramarDuenoTx(ctx context.Context, in ReprogramarTxInput) (DuenoReservaDetail, error)
+
+	// Fase 3B — Notificaciones in-app y suscripciones Web Push (Decisión 6)
+	ListNotificaciones(ctx context.Context, usuarioID uuid.UUID, filter ListNotificacionesFilter) (NotificacionesListResponse, error)
+	MarkNotificacionLeida(ctx context.Context, usuarioID, notificacionID uuid.UUID) (NotificacionItem, error)
+	MarkAllNotificacionesLeidas(ctx context.Context, usuarioID uuid.UUID) (int64, error)
+	UpsertPushSubscription(ctx context.Context, usuarioID uuid.UUID, in UpsertPushSubscriptionInput) (PushSubscriptionResponse, error)
+	DeactivatePushSubscription(ctx context.Context, usuarioID uuid.UUID, endpoint string) error
+
 	ExpireStaleHolds(ctx context.Context, batchSize int) (int, error)
 }
 
@@ -759,6 +781,8 @@ func (r *PostgresRepository) GetJugadorReservaDetail(ctx context.Context, reserv
 			r.cancelado_at,
 			r.motivo_cancelacion,
 			r.reembolso_pendiente,
+			r.reembolso_resuelto_at,
+			r.reprogramaciones_count,
 			r.created_at,
 			r.updated_at,
 			c.id,
@@ -795,6 +819,7 @@ func (r *PostgresRepository) GetJugadorReservaDetail(ctx context.Context, reserv
 		porValidarDesde     *time.Time
 		checkinAt           *time.Time
 		canceladoAt         *time.Time
+		reembolsoResueltoAt *time.Time
 		createdAt           time.Time
 		updatedAt           time.Time
 		dbNow               time.Time
@@ -822,6 +847,8 @@ func (r *PostgresRepository) GetJugadorReservaDetail(ctx context.Context, reserv
 		&canceladoAt,
 		&out.MotivoCancelacion,
 		&out.ReembolsoPendiente,
+		&reembolsoResueltoAt,
+		&out.ReprogramacionesCount,
 		&createdAt,
 		&updatedAt,
 		&out.Complejo.ID,
@@ -864,6 +891,7 @@ func (r *PostgresRepository) GetJugadorReservaDetail(ctx context.Context, reserv
 	out.PorValidarDesde = toLimaPtr(porValidarDesde)
 	out.CheckinAt = toLimaPtr(checkinAt)
 	out.CanceladoAt = toLimaPtr(canceladoAt)
+	out.ReembolsoResueltoAt = toLimaPtr(reembolsoResueltoAt)
 	out.CreatedAt = createdAt.In(limaLocation)
 	out.UpdatedAt = updatedAt.In(limaLocation)
 

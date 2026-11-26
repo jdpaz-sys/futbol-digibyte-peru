@@ -424,6 +424,196 @@ func FormatMinutes(min int) string {
 	return fmt.Sprintf("%02d:%02d", min/60, min%60)
 }
 
+// ExternaPricingResult contiene los importes calculados (o sobreescritos explícitamente)
+// para una reserva externa registrada por el dueño (RF-14).
+type ExternaPricingResult struct {
+	Inicio         time.Time
+	Fin            time.Time
+	DuracionMin    int
+	PrecioBase     float64
+	MontoDescuento float64
+	MontoTotal     float64
+	MontoAdelanto  float64
+	SaldoPendiente float64
+}
+
+// CalculateExternaPricing valida horario/unidad y determina montos para una reserva externa.
+// Si montoTotalOverride es nil, calcula la tarifa exacta con ResolveTarifasInterval;
+// si montoAdelanto es nil, registra adelanto = 0.00 (todo queda como saldo pendiente).
+func CalculateExternaPricing(
+	complejo ComplejoContext,
+	canchaID uuid.UUID,
+	horario *HorarioAtencion,
+	tarifas []TarifaFranja,
+	inicio, fin time.Time,
+	montoTotalOverride *float64,
+	montoAdelanto *float64,
+	now time.Time,
+) (ExternaPricingResult, error) {
+	dayStart, _, startMin, endMin, err := ExtractRangeMinutesLima(inicio, fin)
+	if err != nil {
+		return ExternaPricingResult{}, err
+	}
+	if !inicio.After(now) {
+		return ExternaPricingResult{}, ErrSlotEnPasado
+	}
+	if err := ValidateSlotWindow(horario, complejo.UnidadReservaMin, startMin, endMin); err != nil {
+		return ExternaPricingResult{}, err
+	}
+
+	var montoTotalCents int64
+	if montoTotalOverride != nil {
+		montoTotalCents = toCents(*montoTotalOverride)
+	} else {
+		_, precioBaseCents, _, err := ResolveTarifasInterval(dayStart, startMin, endMin, canchaID, tarifas)
+		if err != nil {
+			return ExternaPricingResult{}, err
+		}
+		montoTotalCents = precioBaseCents
+	}
+
+	var adelantoCents int64
+	if montoAdelanto != nil {
+		adelantoCents = toCents(*montoAdelanto)
+		if adelantoCents < 0 || adelantoCents > montoTotalCents {
+			return ExternaPricingResult{}, &ValidationError{
+				Message: "Monto de adelanto inválido",
+				Fields: map[string]string{
+					"monto_adelanto": "monto_adelanto debe estar entre 0 y el monto total de la reserva",
+				},
+			}
+		}
+	}
+
+	saldoCents := montoTotalCents - adelantoCents
+	return ExternaPricingResult{
+		Inicio:         dayStart.Add(time.Duration(startMin) * time.Minute),
+		Fin:            dayStart.Add(time.Duration(endMin) * time.Minute),
+		DuracionMin:    endMin - startMin,
+		PrecioBase:     fromCents(montoTotalCents),
+		MontoDescuento: 0,
+		MontoTotal:     fromCents(montoTotalCents),
+		MontoAdelanto:  fromCents(adelantoCents),
+		SaldoPendiente: fromCents(saldoCents),
+	}, nil
+}
+
+// ReprogramPricingResult agrupa los montos recalculados tras reprogramar una reserva (Decisión 4).
+type ReprogramPricingResult struct {
+	Inicio             time.Time
+	Fin                time.Time
+	DuracionMin        int
+	PrecioBase         float64
+	MontoDescuento     float64
+	MontoTotal         float64
+	MontoAdelanto      float64
+	SaldoPendiente     float64
+	ReembolsoPendiente bool
+	ExcedenteReembolso float64
+}
+
+// CalculateReprogramPricing recalcula la tarifa para el nuevo rango/cancha conservando el adelanto
+// pagado y recalculando saldo_pendiente. Si el nuevo monto_total es menor al adelanto pagado,
+// fija saldo_pendiente = 0, ajusta monto_adelanto al nuevo total (respetando el check SQL
+// monto_adelanto <= monto_total), activa reembolso_pendiente = true y expone ExcedenteReembolso.
+func CalculateReprogramPricing(
+	complejo ComplejoContext,
+	targetCanchaID uuid.UUID,
+	horario *HorarioAtencion,
+	tarifas []TarifaFranja,
+	nuevoInicio, nuevoFin time.Time,
+	cupon *CuponRecord,
+	adelantoPagado float64,
+	reembolsoPrevio bool,
+	now time.Time,
+) (ReprogramPricingResult, error) {
+	dayStart, _, startMin, endMin, err := ExtractRangeMinutesLima(nuevoInicio, nuevoFin)
+	if err != nil {
+		return ReprogramPricingResult{}, err
+	}
+	if !nuevoInicio.After(now) {
+		return ReprogramPricingResult{}, ErrSlotEnPasado
+	}
+	if err := ValidateSlotWindow(horario, complejo.UnidadReservaMin, startMin, endMin); err != nil {
+		return ReprogramPricingResult{}, err
+	}
+
+	_, precioBaseCents, incluyeHoraMuerta, err := ResolveTarifasInterval(
+		dayStart,
+		startMin,
+		endMin,
+		targetCanchaID,
+		tarifas,
+	)
+	if err != nil {
+		return ReprogramPricingResult{}, err
+	}
+
+	var descuentoCents int64
+	if cupon != nil {
+		if incluyeHoraMuerta && !cupon.AcumulableHoraMuerta {
+			return ReprogramPricingResult{}, ErrCuponNotStackableDeadHour
+		}
+		switch cupon.TipoDescuento {
+		case TipoPorcentaje:
+			descuentoCents = int64(math.Round(float64(precioBaseCents) * cupon.ValorDescuento / 100.0))
+		case TipoMontoFijo:
+			descuentoCents = toCents(cupon.ValorDescuento)
+		}
+		if descuentoCents > precioBaseCents {
+			descuentoCents = precioBaseCents
+		}
+		if descuentoCents < 0 {
+			descuentoCents = 0
+		}
+	}
+
+	newTotalCents := precioBaseCents - descuentoCents
+	oldAdelantoCents := toCents(adelantoPagado)
+	if oldAdelantoCents < 0 {
+		oldAdelantoCents = 0
+	}
+
+	var (
+		newAdelantoCents   int64
+		newSaldoCents      int64
+		excedenteCents     int64
+		reembolsoPendiente = reembolsoPrevio
+	)
+
+	if newTotalCents >= oldAdelantoCents {
+		newAdelantoCents = oldAdelantoCents
+		newSaldoCents = newTotalCents - oldAdelantoCents
+	} else {
+		newAdelantoCents = newTotalCents
+		newSaldoCents = 0
+		reembolsoPendiente = true
+		excedenteCents = oldAdelantoCents - newTotalCents
+	}
+
+	return ReprogramPricingResult{
+		Inicio:             dayStart.Add(time.Duration(startMin) * time.Minute),
+		Fin:                dayStart.Add(time.Duration(endMin) * time.Minute),
+		DuracionMin:        endMin - startMin,
+		PrecioBase:         fromCents(precioBaseCents),
+		MontoDescuento:     fromCents(descuentoCents),
+		MontoTotal:         fromCents(newTotalCents),
+		MontoAdelanto:      fromCents(newAdelantoCents),
+		SaldoPendiente:     fromCents(newSaldoCents),
+		ReembolsoPendiente: reembolsoPendiente,
+		ExcedenteReembolso: fromCents(excedenteCents),
+	}, nil
+}
+
+// ValidateCancellationWindow valida RN-13: now <= inicio - horasMinCancelacion.
+func ValidateCancellationWindow(inicio time.Time, horasMinCancelacion int16, now time.Time) error {
+	deadline := inicio.Add(-time.Duration(horasMinCancelacion) * time.Hour)
+	if now.After(deadline) {
+		return ErrCancellationWindowExpired
+	}
+	return nil
+}
+
 func calculateAdelantoCents(montoTotalCents int64, tipoAdelanto string, valorAdelanto float64) int64 {
 	if montoTotalCents <= 0 {
 		return 0

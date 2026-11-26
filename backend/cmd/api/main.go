@@ -24,6 +24,7 @@ import (
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/auth"
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/complejos"
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/geo"
+	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/reportes"
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/reservas"
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/suscripciones"
 )
@@ -109,6 +110,10 @@ func run() error {
 	reservasHandler := reservas.NewHandler(reservasService, rateLimiter, logger)
 	expirationWorker := reservas.NewExpirationWorker(reservasRepo, reservas.DefaultWorkerInterval, logger)
 
+	reportesRepo := reportes.NewRepository(pgPool)
+	reportesService := reportes.NewService(reportesRepo)
+	reportesHandler := reportes.NewHandler(reportesService, logger)
+
 	router := apphttp.NewRouter(apphttp.RouterConfig{
 		CORSAllowedOrigins: cfg.CORSAllowedOrigins,
 		Logger:             logger,
@@ -128,6 +133,8 @@ func run() error {
 		MountDueno: func(dueno chi.Router) {
 			complejosHandler.RegisterDuenoRoutes(dueno)
 			geoHandler.RegisterDuenoRoutes(dueno)
+			reservasHandler.RegisterDuenoRoutes(dueno)
+			reportesHandler.RegisterDuenoRoutes(dueno)
 		},
 		MountJugador: func(jugador chi.Router) {
 			reservasHandler.RegisterJugadorRoutes(jugador)

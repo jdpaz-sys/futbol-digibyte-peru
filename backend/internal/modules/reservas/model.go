@@ -18,7 +18,9 @@ const (
 	EstadoCancelada     = "CANCELADA"
 	EstadoNoShow        = "NO_SHOW"
 
-	OrigenApp = "APP"
+	OrigenApp                  = "APP"
+	OrigenExterna              = "EXTERNA"
+	OrigenBloqueoMantenimiento = "BLOQUEO_MANTENIMIENTO"
 
 	TipoPorcentaje = "PORCENTAJE"
 	TipoMontoFijo  = "MONTO_FIJO"
@@ -36,24 +38,51 @@ const (
 	MetodoPagoCulqi         = "CULQI"
 	MetodoPagoMercadoPago   = "MERCADOPAGO"
 
+	MetodoSaldoEfectivo      = "EFECTIVO"
+	MetodoSaldoYape          = "YAPE"
+	MetodoSaldoPlin          = "PLIN"
+	MetodoSaldoTransferencia = "TRANSFERENCIA"
+	MetodoSaldoTarjeta       = "TARJETA"
+	MetodoSaldoOtro          = "OTRO"
+
 	MotivoSlotPasado    = "PASADO"
 	MotivoSlotOcupado   = "OCUPADO"
 	MotivoSlotSinTarifa = "SIN_TARIFA"
 
-	AccionHoldCreado        = "HOLD_CREADO"
-	AccionComprobanteSubido = "COMPROBANTE_SUBIDO"
-	AccionHoldExpirado      = "HOLD_EXPIRADO"
+	AccionHoldCreado              = "HOLD_CREADO"
+	AccionComprobanteSubido       = "COMPROBANTE_SUBIDO"
+	AccionHoldExpirado            = "HOLD_EXPIRADO"
+	AccionComprobanteAprobado     = "COMPROBANTE_APROBADO"
+	AccionComprobanteRechazado    = "COMPROBANTE_RECHAZADO"
+	AccionReservaExternaCreada    = "RESERVA_EXTERNA_CREADA"
+	AccionBloqueoCreado           = "BLOQUEO_CREADO"
+	AccionCheckinCompletado       = "CHECKIN_COMPLETADO"
+	AccionNoShowRegistrado        = "NO_SHOW_REGISTRADO"
+	AccionReservaCanceladaJugador = "RESERVA_CANCELADA_JUGADOR"
+	AccionReservaCanceladaDueno   = "RESERVA_CANCELADA_DUENO"
+	AccionReembolsoResuelto       = "REEMBOLSO_RESUELTO"
+	AccionReprogramadaJugador     = "RESERVA_REPROGRAMADA_JUGADOR"
+	AccionReprogramadaDueno       = "RESERVA_REPROGRAMADA_DUENO"
 
 	NotifComprobantePorValidar = "COMPROBANTE_POR_VALIDAR"
+	NotifReservaConfirmada     = "RESERVA_CONFIRMADA"
+	NotifComprobanteRechazado  = "COMPROBANTE_RECHAZADO"
+	NotifReservaNoShow         = "RESERVA_NO_SHOW"
+	NotifReservaCancelada      = "RESERVA_CANCELADA"
+	NotifReservaReprogramada   = "RESERVA_REPROGRAMADA"
+	NotifReembolsoResuelto     = "REEMBOLSO_RESUELTO"
 
 	ZonaHorariaLima = "America/Lima"
 
 	DefaultListLimit       = 20
 	MaxListLimit           = 50
+	DefaultDuenoListLimit  = 50
+	MaxDuenoListLimit      = 100
 	MaxEvidenciaBytes      = 5 << 20 // 5 MiB
 	MaxPrecioMonto         = 99999999.99
 	DefaultWorkerInterval  = 30 * time.Second
 	DefaultWorkerBatchSize = 100
+	AlertaDemoraThreshold  = 30 * time.Minute
 )
 
 var (
@@ -76,6 +105,9 @@ var (
 	ErrReservaForbidden          = errors.New("no tienes permisos para acceder a esta reserva")
 	ErrHoldExpired               = errors.New("el tiempo límite del bloqueo temporal expiró")
 	ErrInvalidReservaState       = errors.New("la reserva no se encuentra en un estado válido para esta operación")
+	ErrInvalidReservaOrigen      = errors.New("esta operación no aplica para el origen de esta reserva")
+	ErrCancellationWindowExpired = errors.New("ya venció la ventana mínima de cancelación o reprogramación configurada por el complejo")
+	ErrReembolsoNoPendiente      = errors.New("la reserva no tiene un reembolso directo pendiente")
 	ErrMetodoPagoNotFound        = errors.New("método de pago no encontrado o inactivo en este complejo")
 	ErrMetodoPagoNoManual        = errors.New("el método de pago seleccionado no admite comprobantes manuales")
 	ErrComprobanteNotFound       = errors.New("comprobante de pago no encontrado")
@@ -83,6 +115,8 @@ var (
 	ErrEvidenciaForbidden        = errors.New("no tienes permisos para descargar esta evidencia")
 	ErrFileTooLarge              = errors.New("la imagen del comprobante excede el límite máximo de 5 MB")
 	ErrInvalidFileType           = errors.New("el comprobante debe ser una imagen válida en formato JPG, PNG o WEBP")
+	ErrNotificacionNotFound      = errors.New("notificación no encontrada")
+	ErrPushSubscriptionNotFound  = errors.New("suscripción Web Push no encontrada")
 )
 
 // ValidationError representa errores de validación de entrada con detalle por campo.
@@ -455,12 +489,223 @@ type JugadorReservaDetail struct {
 	CanceladoAt           *time.Time          `json:"cancelado_at,omitempty"`
 	MotivoCancelacion     *string             `json:"motivo_cancelacion,omitempty"`
 	ReembolsoPendiente    bool                `json:"reembolso_pendiente"`
+	ReembolsoResueltoAt   *time.Time          `json:"reembolso_resuelto_at,omitempty"`
+	ReprogramacionesCount int16               `json:"reprogramaciones_count"`
+	ExcedenteReembolso    float64             `json:"excedente_reembolso,omitempty"`
 	Complejo              ComplejoRutaInfo    `json:"complejo"`
 	Cancha                CanchaInfo          `json:"cancha"`
 	Comprobantes          []ComprobanteInfo   `json:"comprobantes"`
 	MetodosPago           []MetodoPagoPublico `json:"metodos_pago,omitempty"`
 	CreatedAt             time.Time           `json:"created_at"`
 	UpdatedAt             time.Time           `json:"updated_at"`
+}
+
+// ---------- Contratos API: Operación Diaria del Dueño (Fase 3B) ----------
+
+// ListDuenoReservasFilter filtra la agenda y bandeja de validación del complejo.
+type ListDuenoReservasFilter struct {
+	FechaDesde string
+	FechaHasta string
+	CanchaID   *uuid.UUID
+	Estado     string
+	Origen     string
+	Limit      int
+	Offset     int
+}
+
+// DuenoReservasQueryParams contiene el rango ya normalizado en America/Lima para consulta SQL.
+type DuenoReservasQueryParams struct {
+	Desde    *time.Time
+	HastaEnd *time.Time
+	CanchaID *uuid.UUID
+	Estado   string
+	Origen   string
+	Limit    int
+	Offset   int
+}
+
+// DuenoReservaItem resume una reserva en la agenda/bandeja de GET /api/v1/dueno/reservas.
+type DuenoReservaItem struct {
+	ID                         uuid.UUID        `json:"id"`
+	ComplejoID                 uuid.UUID        `json:"complejo_id"`
+	CanchaID                   uuid.UUID        `json:"cancha_id"`
+	CanchaNombre               string           `json:"cancha_nombre"`
+	CanchaModalidad            string           `json:"cancha_modalidad"`
+	Origen                     string           `json:"origen"`
+	Estado                     string           `json:"estado"`
+	Inicio                     time.Time        `json:"inicio"`
+	Fin                        time.Time        `json:"fin"`
+	DuracionMin                int              `json:"duracion_min"`
+	JugadorID                  *uuid.UUID       `json:"jugador_id,omitempty"`
+	JugadorNombre              *string          `json:"jugador_nombre,omitempty"`
+	JugadorTelefono            *string          `json:"jugador_telefono,omitempty"`
+	ClienteExternoNombre       *string          `json:"cliente_externo_nombre,omitempty"`
+	ClienteExternoTelefono     *string          `json:"cliente_externo_telefono,omitempty"`
+	MotivoBloqueo              *string          `json:"motivo_bloqueo,omitempty"`
+	NotasInternas              *string          `json:"notas_internas,omitempty"`
+	PrecioBase                 float64          `json:"precio_base"`
+	MontoDescuento             float64          `json:"monto_descuento"`
+	MontoTotal                 float64          `json:"monto_total"`
+	MontoAdelanto              float64          `json:"monto_adelanto"`
+	SaldoPendiente             float64          `json:"saldo_pendiente"`
+	MetodoPagoSaldo            *string          `json:"metodo_pago_saldo,omitempty"`
+	SaldoPagadoAt              *time.Time       `json:"saldo_pagado_at,omitempty"`
+	HoldExpiraAt               *time.Time       `json:"hold_expira_at,omitempty"`
+	PorValidarDesde            *time.Time       `json:"por_validar_desde,omitempty"`
+	AlertaDemora               bool             `json:"alerta_demora"`
+	MinutosEsperaValidacion    *int             `json:"minutos_espera_validacion,omitempty"`
+	UltimoComprobantePendiente *ComprobanteInfo `json:"ultimo_comprobante_pendiente,omitempty"`
+	CodigoQR                   *string          `json:"codigo_qr,omitempty"`
+	CheckinAt                  *time.Time       `json:"checkin_at,omitempty"`
+	CanceladoAt                *time.Time       `json:"cancelado_at,omitempty"`
+	MotivoCancelacion          *string          `json:"motivo_cancelacion,omitempty"`
+	ReembolsoPendiente         bool             `json:"reembolso_pendiente"`
+	ReembolsoResueltoAt        *time.Time       `json:"reembolso_resuelto_at,omitempty"`
+	ReprogramacionesCount      int16            `json:"reprogramaciones_count"`
+	CreatedAt                  time.Time        `json:"created_at"`
+	UpdatedAt                  time.Time        `json:"updated_at"`
+}
+
+// DuenoReservasListResponse envuelve la agenda paginada del complejo.
+type DuenoReservasListResponse struct {
+	Items  []DuenoReservaItem `json:"items"`
+	Total  int                `json:"total"`
+	Limit  int                `json:"limit"`
+	Offset int                `json:"offset"`
+}
+
+// DuenoReservaDetail entrega la vista completa de una reserva para operaciones del dueño.
+type DuenoReservaDetail struct {
+	ID                     uuid.UUID         `json:"id"`
+	ComplejoID             uuid.UUID         `json:"complejo_id"`
+	Cancha                 CanchaInfo        `json:"cancha"`
+	Origen                 string            `json:"origen"`
+	Estado                 string            `json:"estado"`
+	Inicio                 time.Time         `json:"inicio"`
+	Fin                    time.Time         `json:"fin"`
+	DuracionMin            int               `json:"duracion_min"`
+	JugadorID              *uuid.UUID        `json:"jugador_id,omitempty"`
+	JugadorNombre          *string           `json:"jugador_nombre,omitempty"`
+	JugadorTelefono        *string           `json:"jugador_telefono,omitempty"`
+	ClienteExternoNombre   *string           `json:"cliente_externo_nombre,omitempty"`
+	ClienteExternoTelefono *string           `json:"cliente_externo_telefono,omitempty"`
+	MotivoBloqueo          *string           `json:"motivo_bloqueo,omitempty"`
+	NotasInternas          *string           `json:"notas_internas,omitempty"`
+	CuponID                *uuid.UUID        `json:"cupon_id,omitempty"`
+	PrecioBase             float64           `json:"precio_base"`
+	MontoDescuento         float64           `json:"monto_descuento"`
+	MontoTotal             float64           `json:"monto_total"`
+	MontoAdelanto          float64           `json:"monto_adelanto"`
+	SaldoPendiente         float64           `json:"saldo_pendiente"`
+	MetodoPagoSaldo        *string           `json:"metodo_pago_saldo,omitempty"`
+	SaldoPagadoAt          *time.Time        `json:"saldo_pagado_at,omitempty"`
+	HoldExpiraAt           *time.Time        `json:"hold_expira_at,omitempty"`
+	PorValidarDesde        *time.Time        `json:"por_validar_desde,omitempty"`
+	AlertaDemora           bool              `json:"alerta_demora"`
+	CodigoQR               *string           `json:"codigo_qr,omitempty"`
+	CheckinAt              *time.Time        `json:"checkin_at,omitempty"`
+	CanceladoAt            *time.Time        `json:"cancelado_at,omitempty"`
+	MotivoCancelacion      *string           `json:"motivo_cancelacion,omitempty"`
+	ReembolsoPendiente     bool              `json:"reembolso_pendiente"`
+	ReembolsoResueltoAt    *time.Time        `json:"reembolso_resuelto_at,omitempty"`
+	ReprogramacionesCount  int16             `json:"reprogramaciones_count"`
+	ExcedenteReembolso     float64           `json:"excedente_reembolso,omitempty"`
+	Comprobantes           []ComprobanteInfo `json:"comprobantes"`
+	CreatedAt              time.Time         `json:"created_at"`
+	UpdatedAt              time.Time         `json:"updated_at"`
+}
+
+// RechazarComprobanteRequest representa el cuerpo de POST /api/v1/dueno/reservas/{reservaID}/rechazar.
+type RechazarComprobanteRequest struct {
+	Motivo string `json:"motivo"`
+}
+
+// CreateExternaRequest representa el cuerpo de POST /api/v1/dueno/reservas/externas.
+type CreateExternaRequest struct {
+	CanchaID               string   `json:"cancha_id"`
+	Inicio                 string   `json:"inicio"`
+	Fin                    string   `json:"fin"`
+	ClienteExternoNombre   string   `json:"cliente_externo_nombre"`
+	ClienteExternoTelefono string   `json:"cliente_externo_telefono,omitempty"`
+	MontoTotal             *float64 `json:"monto_total,omitempty"`
+	MontoAdelanto          *float64 `json:"monto_adelanto,omitempty"`
+	Notas                  string   `json:"notas,omitempty"`
+}
+
+// CreateBloqueoRequest representa el cuerpo de POST /api/v1/dueno/bloqueos.
+type CreateBloqueoRequest struct {
+	CanchaID      string `json:"cancha_id"`
+	Inicio        string `json:"inicio"`
+	Fin           string `json:"fin"`
+	MotivoBloqueo string `json:"motivo_bloqueo"`
+}
+
+// CheckinRequest representa el cuerpo de POST /api/v1/dueno/reservas/{reservaID}/checkin.
+type CheckinRequest struct {
+	MetodoPagoSaldo string `json:"metodo_pago_saldo,omitempty"`
+}
+
+// NoShowRequest representa el cuerpo opcional de POST /api/v1/dueno/reservas/{reservaID}/no-show.
+type NoShowRequest struct {
+	Motivo string `json:"motivo,omitempty"`
+}
+
+// CancelarReservaRequest representa el cuerpo de cancelación para jugador (motivo opcional) o dueño (motivo obligatorio).
+type CancelarReservaRequest struct {
+	Motivo string `json:"motivo,omitempty"`
+}
+
+// ReembolsoResueltoRequest representa el cuerpo opcional de POST /api/v1/dueno/reservas/{reservaID}/reembolso-resuelto.
+type ReembolsoResueltoRequest struct {
+	Motivo string `json:"motivo,omitempty"`
+}
+
+// ReprogramarReservaRequest representa el cuerpo de reprogramación para jugador o dueño (Decisión 4).
+type ReprogramarReservaRequest struct {
+	CanchaID    string `json:"cancha_id,omitempty"`
+	NuevoInicio string `json:"nuevo_inicio"`
+	NuevoFin    string `json:"nuevo_fin"`
+	Motivo      string `json:"motivo,omitempty"`
+}
+
+// ---------- Parámetros transaccionales adicionales (Fase 3B) ----------
+
+// CreateExternaTxInput encapsula los datos validados para registrar una reserva externa atómicamente.
+type CreateExternaTxInput struct {
+	ComplejoID             uuid.UUID
+	DuenoUserID            uuid.UUID
+	CanchaID               uuid.UUID
+	Inicio                 time.Time
+	Fin                    time.Time
+	ClienteExternoNombre   string
+	ClienteExternoTelefono *string
+	MontoTotalOverride     *float64
+	MontoAdelanto          *float64
+	NotasInternas          *string
+	CodigoQR               string
+}
+
+// CreateBloqueoTxInput encapsula los datos validados para registrar un bloqueo de mantenimiento.
+type CreateBloqueoTxInput struct {
+	ComplejoID    uuid.UUID
+	DuenoUserID   uuid.UUID
+	CanchaID      uuid.UUID
+	Inicio        time.Time
+	Fin           time.Time
+	MotivoBloqueo string
+}
+
+// ReprogramarTxInput encapsula los datos validados para reprogramar una reserva en el sitio (Decisión 4).
+type ReprogramarTxInput struct {
+	ReservaID   uuid.UUID
+	ComplejoID  *uuid.UUID // Presente cuando ejecuta el dueño
+	JugadorID   *uuid.UUID // Presente cuando ejecuta el jugador
+	ActorID     uuid.UUID
+	IsDueno     bool
+	CanchaID    *uuid.UUID // Nil = conservar cancha actual
+	NuevoInicio time.Time
+	NuevoFin    time.Time
+	Motivo      string
 }
 
 // ---------- Parámetros de escritura transaccional ----------

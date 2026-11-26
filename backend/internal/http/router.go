@@ -189,6 +189,36 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	return nil
 }
 
+// DecodeOptionalJSON decodifica un cuerpo JSON opcional: permite cuerpo vacío sin error,
+// pero valida tamaño, formato y campos desconocidos cuando existe contenido.
+func DecodeOptionalJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	if r.Body == nil || r.ContentLength == 0 {
+		return nil
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	if err := dec.Decode(dst); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return fmt.Errorf("el cuerpo de la solicitud excede el tamaño máximo permitido")
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return fmt.Errorf("JSON inválido: %w", err)
+	}
+
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("el cuerpo debe contener un único objeto JSON")
+	}
+
+	return nil
+}
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")

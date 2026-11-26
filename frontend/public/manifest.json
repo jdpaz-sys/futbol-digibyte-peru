@@ -1,0 +1,21 @@
+{
+  "name": "Fútbol Digibyte Perú",
+  "short_name": "Fútbol Digibyte",
+  "description": "Reserva canchas sintéticas en tiempo real, congela tu horario al instante y valida tu ingreso con código QR.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#070B14",
+  "theme_color": "#070B14",
+  "lang": "es-PE",
+  "categories": ["sports", "lifestyle"],
+  "icons": [
+    {
+      "src": "/media/logo-digibyte-futbol.png",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

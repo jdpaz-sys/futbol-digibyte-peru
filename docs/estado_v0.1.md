@@ -1,8 +1,8 @@
 # Estado del Proyecto — Fútbol Digibyte Perú (v0.1)
 
-- **Fase actual:** Fase 3C (Multimedia pública/privada, Invalidación Valkey, Perfil/Contraseña Auth, Worker CU-14 completo, Web Push VAPID opcional y CORS) — **Backend 100% cerrado** (pendiente commit en `develop`).
+- **Fase actual:** Fase 4A.1 completada (Frontend base separado `(landing)` vs `(app)`, medios `ffmpeg` optimizados y Hero cinemático con entrada orgánica + scroll-scrubbing GSAP/Lenis) — **Backend 100% cerrado** (pendiente commit en `develop`).
 - **Autor:** Juan David Paz Pastor (Digibyte Perú)
-- **Última actualización:** 2026-11-25
+- **Última actualización:** 2026-11-26
 - **Autoría Git:** `jdpaz-sys` (rama activa: `develop`)
 
 ## Documentos de Contexto Vigentes
@@ -12,7 +12,7 @@
 3. `docs/reglas/requisitos_v0.1.md` — Síntesis técnica de RF-01..16, RNF-01..08, RN-01..20, 8 estados y CU-01..14.
 4. `docs/arquitectura_v0.2.md` — Contrato técnico definitivo (Next.js + Go + PostgreSQL 16/PostGIS + Valkey + S3 + Caddy).
 
-## Hitos Cerrados (Backend 100%: Fases 0, 1A, 1B, 2A, 2B, 2C, 3A, 3B y 3C)
+## Hitos Cerrados
 
 - **Fase 0:** SRS sintetizado, reglas operativas y arquitectura desacoplada aprobada (`v0.1-planificacion`).
 - **Fase 1A — Infraestructura Dev y SQL:** `infra/docker-compose.dev.yml` (PostgreSQL 16 + PostGIS 3.4 en `America/Lima` y Valkey 8) y migración `000001_init` (15 tablas, FKs multi-tenant, PostGIS WGS84, GIST anticolisión; cero GPS de jugador).
@@ -21,10 +21,11 @@
 - **Fase 2B — Módulo `complejos` (`DUENO`):** cifrado AES-256-GCM y 21 endpoints `/api/v1/dueno/*` (perfil/PostGIS/reglas, publicación RN-03, canchas, horarios, tarifas GIST, cupones RN-09 y medios de cobro RN-10).
 - **Fase 2C — Módulo `geo` y Catálogo Público:** geocodificación inversa cacheada, `GET /api/v1/public/complejos` (`ST_DWithin`/`ST_Distance`, degradación RN-19) y detalle por slug (RN-02).
 - **Fase 3A — `reservas` (Jugador + Storage + Worker):** `LocalFileStorage` privado, disponibilidad/cotizador mixto RN-08/RN-09, Hold GIST (`23P01` -> `409`), comprobante manual (`POR_VALIDAR`), mis reservas/evidencia ACL y worker de expiración 30s (`FOR UPDATE SKIP LOCKED`).
-- **Fase 3B — `reservas` (Dueño + Notificaciones/Push) y `reportes`:** agenda `/api/v1/dueno/reservas` con `alerta_demora` >30 min (Decisión 3), aprobar/rechazar, externas y bloqueos GIST (RN-06), búsqueda QR, check-in y No-Show, cancelaciones RN-13/RN-14, reprogramación in-place Decisión 4, `/api/v1/notificaciones` + `/api/v1/push-subscriptions` y `GET /api/v1/dueno/reportes/resumen` (RF-16).
-- **Fase 3C — Cierre Operativo del Backend (cero migraciones nuevas):** galería `/dueno/fotos`, foto de cancha, QR Yape/Plin y servicio público seguro `GET /api/v1/public/media/*` (prefijo `public/`, MIME real, bloqueo de vouchers privados); invalidación inmediata de caché Valkey por slug; `PATCH /auth/me` y `POST /auth/change-password` con revocación de refresh tokens; worker CU-14 cada 5 min (vencer suscripciones RN-02, avisos `<=3d` y recordatorios `<2h` idempotentes); Web Push VAPID opcional (`GET /api/v1/public/push-config`, desactivación `410 Gone`) y CORS listo para Next.js.
+- **Fase 3B — `reservas` (Dueño + Notificaciones/Push) y `reportes`:** agenda `/api/v1/dueno/reservas` con `alerta_demora` >30 min, aprobar/rechazar, externas/bloqueos GIST, lector QR, check-in/No-Show, cancelaciones/reprogramación, `/api/v1/notificaciones` + push y `GET /api/v1/dueno/reportes/resumen`.
+- **Fase 3C — Cierre Operativo del Backend:** galería `/dueno/fotos`, foto de cancha, QR Yape/Plin y `GET /api/v1/public/media/*`; invalidación Valkey por slug; perfil/contraseña auth; worker CU-14 cada 5 min; Web Push VAPID opcional y CORS listo para Next.js.
+- **Fase 4A.1 — Base Frontend Separada y Hero Cinemático (`/`):** Next.js 16 + `pnpm`, separación estricta `src/landing/` vs `src/webapp/` y Route Groups `(landing)` vs `(app)` (`/explorar`, `/login`), tipografía Bricolage Grotesque + Manrope + JetBrains Mono, activos `ffmpeg` `bt709` adaptativos (Desktop 1080p `WebM`/`MP4`/`WebP` + Móvil 9:16 `540x960` `WebM`/`MP4`/`WebP`, `balon-desarme.mp4` y logo `15 KB`), caché inmutable y Hero con despegue `0->2.4s`, contador `1->100` y 3 actos por scroll (GSAP + Lenis aislados en `src/landing/`).
 
-## Siguiente Paso Exacto (Fase 4 — Frontend Next.js)
+## Siguiente Paso Exacto (En Chat Nuevo)
 
-1. Aprobar commit de Fase 3C en `develop`.
-2. Iniciar Fase 4: Planificación visual y construcción del Frontend PWA Next.js (App Router, TypeScript, Tailwind, Radix/shadcn, MapLibre + OSRM, paleta Digibyte Navy/Cobalto) consumiendo directamente `/api/v1/*`.
+1. Iniciar **Fase 4A.2**: Sección blanca (`#FFFFFF`) de ingeniería y experiencia con `balon-desarme.mp4` controlado por scroll.
+2. Continuar con **Fase 4A.3** (cierre comercial B2B/B2C y footer de Landing) antes de pasar a la WebApp operativa en **Fase 4B**.

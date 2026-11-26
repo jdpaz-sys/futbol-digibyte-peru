@@ -36,6 +36,7 @@ type Config struct {
 	CORSAllowedOrigins       []string
 	GeocoderBaseURL          string
 	GeocoderUserAgent        string
+	UploadDir                string
 }
 
 // LoadConfig carga opcionalmente un archivo .env local y valida estrictamente
@@ -130,6 +131,7 @@ func LoadConfig() (Config, error) {
 	}
 
 	geocoderUserAgent := getEnvOrDefault("GEOCODER_USER_AGENT", "FutbolDigibytePeru/1.0")
+	uploadDir := getEnvOrDefault("UPLOAD_DIR", "./uploads")
 
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("configuración inválida:\n - %s", strings.Join(errs, "\n - "))
@@ -151,6 +153,7 @@ func LoadConfig() (Config, error) {
 		CORSAllowedOrigins:       corsOrigins,
 		GeocoderBaseURL:          geocoderBaseURL,
 		GeocoderUserAgent:        geocoderUserAgent,
+		UploadDir:                uploadDir,
 	}, nil
 }
 

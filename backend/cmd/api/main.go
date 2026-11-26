@@ -24,6 +24,7 @@ import (
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/auth"
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/complejos"
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/geo"
+	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/reservas"
 	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/modules/suscripciones"
 )
 
@@ -99,6 +100,15 @@ func run() error {
 	})
 	geoHandler := geo.NewHandler(geoService, rateLimiter, logger)
 
+	fileStorage, err := db.NewLocalFileStorage(cfg.UploadDir)
+	if err != nil {
+		return err
+	}
+	reservasRepo := reservas.NewRepository(pgPool)
+	reservasService := reservas.NewService(reservasRepo, fileStorage, logger)
+	reservasHandler := reservas.NewHandler(reservasService, rateLimiter, logger)
+	expirationWorker := reservas.NewExpirationWorker(reservasRepo, reservas.DefaultWorkerInterval, logger)
+
 	router := apphttp.NewRouter(apphttp.RouterConfig{
 		CORSAllowedOrigins: cfg.CORSAllowedOrigins,
 		Logger:             logger,
@@ -110,6 +120,7 @@ func run() error {
 		},
 		MountPublic: func(public chi.Router) {
 			geoHandler.RegisterPublicRoutes(public)
+			reservasHandler.RegisterPublicRoutes(public)
 		},
 		MountAdmin: func(admin chi.Router) {
 			suscripcionesHandler.RegisterAdminRoutes(admin)
@@ -118,16 +129,30 @@ func run() error {
 			complejosHandler.RegisterDuenoRoutes(dueno)
 			geoHandler.RegisterDuenoRoutes(dueno)
 		},
+		MountJugador: func(jugador chi.Router) {
+			reservasHandler.RegisterJugadorRoutes(jugador)
+		},
+		MountAuthenticated: func(authed chi.Router) {
+			reservasHandler.RegisterAuthenticatedRoutes(authed)
+		},
 	})
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+
+	workerCtx, cancelWorker := context.WithCancel(rootCtx)
+	defer cancelWorker()
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		expirationWorker.Start(workerCtx)
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -141,18 +166,34 @@ func run() error {
 		close(errCh)
 	}()
 
+	var serveErr error
 	select {
-	case serveErr := <-errCh:
-		return serveErr
+	case serveErr = <-errCh:
+		cancelWorker()
 	case <-rootCtx.Done():
 		logger.Info("api_server_shutting_down")
+		cancelWorker()
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		return err
+	var shutdownErr error
+	if serveErr == nil {
+		shutdownErr = server.Shutdown(shutdownCtx)
+	}
+
+	select {
+	case <-workerDone:
+	case <-shutdownCtx.Done():
+		logger.Warn("reservas_expiration_worker_shutdown_timeout")
+	}
+
+	if serveErr != nil {
+		return serveErr
+	}
+	if shutdownErr != nil {
+		return shutdownErr
 	}
 
 	logger.Info("api_server_stopped")

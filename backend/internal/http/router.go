@@ -51,6 +51,8 @@ type RouterConfig struct {
 	MountPublic        func(r chi.Router)
 	MountAdmin         func(r chi.Router)
 	MountDueno         func(r chi.Router)
+	MountJugador       func(r chi.Router)
+	MountAuthenticated func(r chi.Router)
 }
 
 // NewRouter construye el router chi/v5 con middlewares globales y prefijo /api/v1.
@@ -109,6 +111,19 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 				dueno.Use(RequireRole(RoleDueno))
 				dueno.Use(RequireTenant(cfg.TenantChecker))
 				cfg.MountDueno(dueno)
+			})
+		}
+		if cfg.MountJugador != nil {
+			v1.Route("/jugador", func(jugador chi.Router) {
+				jugador.Use(RequireAuth(cfg.TokenParser))
+				jugador.Use(RequireRole(RoleJugador))
+				cfg.MountJugador(jugador)
+			})
+		}
+		if cfg.MountAuthenticated != nil {
+			v1.Group(func(authed chi.Router) {
+				authed.Use(RequireAuth(cfg.TokenParser))
+				cfg.MountAuthenticated(authed)
 			})
 		}
 	})

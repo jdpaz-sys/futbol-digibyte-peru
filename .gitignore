@@ -14,6 +14,7 @@ Thumbs.db
 # Backend (Go)
 /backend/bin/
 /backend/tmp/
+/backend/uploads/
 *.exe
 *.test
 *.out

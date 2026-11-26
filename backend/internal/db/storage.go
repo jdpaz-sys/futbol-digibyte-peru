@@ -1,14 +1,25 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+)
+
+const (
+	// MaxImageBytes fija el tamaño máximo permitido (5 MiB) para archivos multimedia e imágenes.
+	MaxImageBytes = 5 << 20
+	// PublicMediaPrefix separa estrictamente los archivos públicos del catálogo frente a vouchers privados.
+	PublicMediaPrefix = "public/"
+	// PublicMediaURLPrefix es el prefijo HTTP relativo para servir archivos bajo PublicMediaPrefix.
+	PublicMediaURLPrefix = "/api/v1/public/media/"
 )
 
 var (
@@ -156,7 +167,9 @@ func (s *LocalFileStorage) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (s *LocalFileStorage) resolvePath(key string) (string, error) {
+// NormalizeStorageKey normaliza y valida una clave de almacenamiento bloqueando path traversal,
+// barras invertidas, bytes nulos y segmentos vacíos o relativos.
+func NormalizeStorageKey(key string) (string, error) {
 	trimmed := strings.TrimSpace(key)
 	if trimmed == "" || strings.HasPrefix(trimmed, "/") || strings.ContainsAny(trimmed, "\\\x00") {
 		return "", ErrInvalidStorageKey
@@ -171,6 +184,73 @@ func (s *LocalFileStorage) resolvePath(key string) (string, error) {
 	cleaned := strings.TrimPrefix(path.Clean("/"+trimmed), "/")
 	if cleaned == "" || cleaned == "." || strings.HasPrefix(cleaned, "..") {
 		return "", ErrInvalidStorageKey
+	}
+
+	return cleaned, nil
+}
+
+// IsPublicMediaKey verifica que una clave normalizada pertenezca estrictamente al espacio público (public/...).
+func IsPublicMediaKey(key string) bool {
+	cleaned, err := NormalizeStorageKey(key)
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(cleaned, PublicMediaPrefix) && len(cleaned) > len(PublicMediaPrefix)
+}
+
+// ExtractPublicStorageKeyFromURL extrae y valida la clave pública si la URL corresponde a nuestro endpoint público de media.
+func ExtractPublicStorageKeyFromURL(rawURL string) (string, bool) {
+	trimmed := strings.TrimSpace(rawURL)
+	if !strings.HasPrefix(trimmed, PublicMediaURLPrefix) {
+		return "", false
+	}
+	rawKey := strings.TrimPrefix(trimmed, PublicMediaURLPrefix)
+	cleaned, err := NormalizeStorageKey(rawKey)
+	if err != nil || !strings.HasPrefix(cleaned, PublicMediaPrefix) || len(cleaned) <= len(PublicMediaPrefix) {
+		return "", false
+	}
+	return cleaned, true
+}
+
+// DetectAllowedImageMIME inspecciona la cabecera real (magic bytes) y permite únicamente JPG, PNG o WEBP.
+func DetectAllowedImageMIME(data []byte) (mimeType string, ext string, ok bool) {
+	if len(data) < 12 {
+		return "", "", false
+	}
+
+	sniffLen := len(data)
+	if sniffLen > 512 {
+		sniffLen = 512
+	}
+	detected := http.DetectContentType(data[:sniffLen])
+
+	switch detected {
+	case "image/jpeg":
+		if bytes.HasPrefix(data, []byte{0xFF, 0xD8, 0xFF}) {
+			return "image/jpeg", ".jpg", true
+		}
+	case "image/png":
+		if bytes.HasPrefix(data, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}) {
+			return "image/png", ".png", true
+		}
+	case "image/webp":
+		if bytes.Equal(data[0:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")) {
+			return "image/webp", ".webp", true
+		}
+	}
+
+	// Fallback defensivo para contenedores WebP válidos (ej. VP8X/ANIM).
+	if bytes.Equal(data[0:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")) {
+		return "image/webp", ".webp", true
+	}
+
+	return "", "", false
+}
+
+func (s *LocalFileStorage) resolvePath(key string) (string, error) {
+	cleaned, err := NormalizeStorageKey(key)
+	if err != nil {
+		return "", err
 	}
 
 	fullPath := filepath.Join(s.baseDir, filepath.FromSlash(cleaned))

@@ -37,6 +37,10 @@ type Config struct {
 	GeocoderBaseURL          string
 	GeocoderUserAgent        string
 	UploadDir                string
+	VAPIDPublicKey           string
+	VAPIDPrivateKey          string
+	VAPIDSubject             string
+	PushEnabled              bool
 }
 
 // LoadConfig carga opcionalmente un archivo .env local y valida estrictamente
@@ -133,6 +137,16 @@ func LoadConfig() (Config, error) {
 	geocoderUserAgent := getEnvOrDefault("GEOCODER_USER_AGENT", "FutbolDigibytePeru/1.0")
 	uploadDir := getEnvOrDefault("UPLOAD_DIR", "./uploads")
 
+	vapidPublicKey := strings.TrimSpace(os.Getenv("VAPID_PUBLIC_KEY"))
+	vapidPrivateKey := strings.TrimSpace(os.Getenv("VAPID_PRIVATE_KEY"))
+	vapidSubject := strings.TrimSpace(os.Getenv("VAPID_SUBJECT"))
+	pushEnabled := vapidPublicKey != "" && vapidPrivateKey != "" && vapidSubject != ""
+	if pushEnabled {
+		if !strings.HasPrefix(vapidSubject, "mailto:") && !strings.HasPrefix(vapidSubject, "https://") {
+			errs = append(errs, "VAPID_SUBJECT debe iniciar con mailto: o https:// cuando Web Push está habilitado")
+		}
+	}
+
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("configuración inválida:\n - %s", strings.Join(errs, "\n - "))
 	}
@@ -154,6 +168,10 @@ func LoadConfig() (Config, error) {
 		GeocoderBaseURL:          geocoderBaseURL,
 		GeocoderUserAgent:        geocoderUserAgent,
 		UploadDir:                uploadDir,
+		VAPIDPublicKey:           vapidPublicKey,
+		VAPIDPrivateKey:          vapidPrivateKey,
+		VAPIDSubject:             vapidSubject,
+		PushEnabled:              pushEnabled,
 	}, nil
 }
 
@@ -189,7 +207,7 @@ func parseCSVEnv(key string, fallback []string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
-		if trimmed := strings.TrimSpace(p); trimmed != "" {
+		if trimmed := strings.TrimRight(strings.TrimSpace(p), "/"); trimmed != "" {
 			out = append(out, trimmed)
 		}
 	}

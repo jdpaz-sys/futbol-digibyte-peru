@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"sort"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	"github.com/jdpaz-sys/futbol-digibyte-peru/backend/internal/db"
 )
 
 const (
@@ -52,10 +55,18 @@ type CredentialsEncryptor interface {
 	Encrypt(plaintext []byte) ([]byte, error)
 }
 
+// PublicCacheInvalidator invalida de forma desacoplada la ficha pública por slug en Valkey.
+type PublicCacheInvalidator interface {
+	InvalidatePublicComplejo(ctx context.Context, slug string) error
+}
+
 // Service contiene la lógica de negocio, validaciones y reglas RN-01/RN-03/RN-08/RN-09/RN-10 del módulo complejos.
 type Service struct {
-	repo   Repository
-	cipher CredentialsEncryptor
+	repo        Repository
+	cipher      CredentialsEncryptor
+	storage     db.FileStorage
+	publicCache PublicCacheInvalidator
+	logger      *slog.Logger
 }
 
 // NewService crea un Service para la autogestión del complejo del dueño.
@@ -63,7 +74,61 @@ func NewService(repo Repository, cipher CredentialsEncryptor) *Service {
 	return &Service{
 		repo:   repo,
 		cipher: cipher,
+		logger: slog.Default(),
 	}
+}
+
+// WithStorage inyecta el almacenamiento desacoplado de archivos (galería, fotos de cancha, QR y lectura pública).
+func (s *Service) WithStorage(storage db.FileStorage) *Service {
+	s.storage = storage
+	return s
+}
+
+// WithPublicCacheInvalidator inyecta el invalidador de caché pública por slug en Valkey.
+func (s *Service) WithPublicCacheInvalidator(inv PublicCacheInvalidator) *Service {
+	s.publicCache = inv
+	return s
+}
+
+// WithLogger configura el logger estructurado del servicio.
+func (s *Service) WithLogger(logger *slog.Logger) *Service {
+	if logger != nil {
+		s.logger = logger
+	}
+	return s
+}
+
+func (s *Service) invalidatePublicCacheBySlug(ctx context.Context, slug string) {
+	if s.publicCache == nil || strings.TrimSpace(slug) == "" {
+		return
+	}
+	invCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := s.publicCache.InvalidatePublicComplejo(invCtx, slug); err != nil && s.logger != nil {
+		s.logger.Warn("complejos_public_cache_invalidate_error",
+			slog.String("slug", slug),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+func (s *Service) invalidatePublicCacheByComplejoID(ctx context.Context, complejoID uuid.UUID) {
+	if s.publicCache == nil {
+		return
+	}
+	lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	slug, err := s.repo.GetComplejoSlug(lookupCtx, complejoID)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("complejos_public_cache_slug_lookup_error",
+				slog.String("complejo_id", complejoID.String()),
+				slog.String("error", err.Error()),
+			)
+		}
+		return
+	}
+	s.invalidatePublicCacheBySlug(lookupCtx, slug)
 }
 
 // IsValidAdelanto verifica las reglas de RF-06 / chk_complejos_adelanto_valido.
@@ -378,15 +443,30 @@ func (s *Service) UpdateComplejo(ctx context.Context, complejoID uuid.UUID, req 
 		}
 	}
 
-	return s.repo.UpdateComplejo(ctx, params)
+	updated, err := s.repo.UpdateComplejo(ctx, params)
+	if err != nil {
+		return ComplejoPerfil{}, err
+	}
+	s.invalidatePublicCacheBySlug(ctx, updated.Slug)
+	return updated, nil
 }
 
 func (s *Service) PublishComplejo(ctx context.Context, complejoID uuid.UUID) (ComplejoPerfil, error) {
-	return s.repo.PublishComplejo(ctx, complejoID)
+	perfil, err := s.repo.PublishComplejo(ctx, complejoID)
+	if err != nil {
+		return ComplejoPerfil{}, err
+	}
+	s.invalidatePublicCacheBySlug(ctx, perfil.Slug)
+	return perfil, nil
 }
 
 func (s *Service) UnpublishComplejo(ctx context.Context, complejoID uuid.UUID) (ComplejoPerfil, error) {
-	return s.repo.UnpublishComplejo(ctx, complejoID)
+	perfil, err := s.repo.UnpublishComplejo(ctx, complejoID)
+	if err != nil {
+		return ComplejoPerfil{}, err
+	}
+	s.invalidatePublicCacheBySlug(ctx, perfil.Slug)
+	return perfil, nil
 }
 
 // ---------- Canchas ----------
@@ -456,7 +536,7 @@ func (s *Service) CreateCancha(ctx context.Context, complejoID uuid.UUID, req Cr
 		}
 	}
 
-	return s.repo.CreateCancha(ctx, Cancha{
+	created, err := s.repo.CreateCancha(ctx, Cancha{
 		ComplejoID:     complejoID,
 		Nombre:         nombre,
 		Modalidad:      modalidad,
@@ -468,6 +548,11 @@ func (s *Service) CreateCancha(ctx context.Context, complejoID uuid.UUID, req Cr
 		Orden:          orden,
 		Activa:         activa,
 	})
+	if err != nil {
+		return Cancha{}, err
+	}
+	s.invalidatePublicCacheByComplejoID(ctx, complejoID)
+	return created, nil
 }
 
 func (s *Service) UpdateCancha(ctx context.Context, complejoID, canchaID uuid.UUID, req UpdateCanchaRequest) (Cancha, error) {
@@ -558,11 +643,21 @@ func (s *Service) UpdateCancha(ctx context.Context, complejoID, canchaID uuid.UU
 		}
 	}
 
-	return s.repo.UpdateCancha(ctx, current)
+	updated, err := s.repo.UpdateCancha(ctx, current)
+	if err != nil {
+		return Cancha{}, err
+	}
+	s.invalidatePublicCacheByComplejoID(ctx, complejoID)
+	return updated, nil
 }
 
 func (s *Service) DeactivateCancha(ctx context.Context, complejoID, canchaID uuid.UUID) (Cancha, error) {
-	return s.repo.DeactivateCancha(ctx, complejoID, canchaID)
+	updated, err := s.repo.DeactivateCancha(ctx, complejoID, canchaID)
+	if err != nil {
+		return Cancha{}, err
+	}
+	s.invalidatePublicCacheByComplejoID(ctx, complejoID)
+	return updated, nil
 }
 
 // ---------- Horarios de Atención ----------
@@ -634,7 +729,12 @@ func (s *Service) UpsertHorarios(ctx context.Context, complejoID uuid.UUID, req 
 		return prepared[i].DiaSemana < prepared[j].DiaSemana
 	})
 
-	return s.repo.UpsertHorarios(ctx, complejoID, prepared)
+	saved, err := s.repo.UpsertHorarios(ctx, complejoID, prepared)
+	if err != nil {
+		return nil, err
+	}
+	s.invalidatePublicCacheByComplejoID(ctx, complejoID)
+	return saved, nil
 }
 
 // ---------- Tarifas por Franja ----------
@@ -730,7 +830,7 @@ func (s *Service) CreateTarifa(ctx context.Context, complejoID uuid.UUID, req Cr
 		}
 	}
 
-	return s.repo.CreateTarifa(ctx, TarifaFranja{
+	created, err := s.repo.CreateTarifa(ctx, TarifaFranja{
 		ComplejoID:   complejoID,
 		CanchaID:     canchaID,
 		DiaSemana:    diaSemana,
@@ -741,6 +841,11 @@ func (s *Service) CreateTarifa(ctx context.Context, complejoID uuid.UUID, req Cr
 		EsHoraMuerta: esHoraMuerta,
 		Activa:       activa,
 	})
+	if err != nil {
+		return TarifaFranja{}, err
+	}
+	s.invalidatePublicCacheByComplejoID(ctx, complejoID)
+	return created, nil
 }
 
 func (s *Service) UpdateTarifa(ctx context.Context, complejoID, tarifaID uuid.UUID, req UpdateTarifaRequest) (TarifaFranja, error) {
@@ -839,11 +944,20 @@ func (s *Service) UpdateTarifa(ctx context.Context, complejoID, tarifaID uuid.UU
 		}
 	}
 
-	return s.repo.UpdateTarifa(ctx, current)
+	updated, err := s.repo.UpdateTarifa(ctx, current)
+	if err != nil {
+		return TarifaFranja{}, err
+	}
+	s.invalidatePublicCacheByComplejoID(ctx, complejoID)
+	return updated, nil
 }
 
 func (s *Service) DeleteTarifa(ctx context.Context, complejoID, tarifaID uuid.UUID) error {
-	return s.repo.DeleteTarifa(ctx, complejoID, tarifaID)
+	if err := s.repo.DeleteTarifa(ctx, complejoID, tarifaID); err != nil {
+		return err
+	}
+	s.invalidatePublicCacheByComplejoID(ctx, complejoID)
+	return nil
 }
 
 // ---------- Cupones ----------
@@ -1093,7 +1207,12 @@ func (s *Service) CreateMetodoPago(ctx context.Context, complejoID uuid.UUID, re
 		params.UpdateCredenciales = true
 	}
 
-	return s.repo.CreateMetodoPago(ctx, params)
+	created, err := s.repo.CreateMetodoPago(ctx, params)
+	if err != nil {
+		return MetodoPago{}, err
+	}
+	s.invalidatePublicCacheByComplejoID(ctx, complejoID)
+	return created, nil
 }
 
 func (s *Service) UpdateMetodoPago(ctx context.Context, complejoID, metodoID uuid.UUID, req UpdateMetodoPagoRequest) (MetodoPago, error) {
@@ -1189,11 +1308,21 @@ func (s *Service) UpdateMetodoPago(ctx context.Context, complejoID, metodoID uui
 		params.UpdateCredenciales = true
 	}
 
-	return s.repo.UpdateMetodoPago(ctx, params)
+	updated, err := s.repo.UpdateMetodoPago(ctx, params)
+	if err != nil {
+		return MetodoPago{}, err
+	}
+	s.invalidatePublicCacheByComplejoID(ctx, complejoID)
+	return updated, nil
 }
 
 func (s *Service) DeactivateMetodoPago(ctx context.Context, complejoID, metodoID uuid.UUID) (MetodoPago, error) {
-	return s.repo.DeactivateMetodoPago(ctx, complejoID, metodoID)
+	updated, err := s.repo.DeactivateMetodoPago(ctx, complejoID, metodoID)
+	if err != nil {
+		return MetodoPago{}, err
+	}
+	s.invalidatePublicCacheByComplejoID(ctx, complejoID)
+	return updated, nil
 }
 
 // ---------- Helpers de validación ----------

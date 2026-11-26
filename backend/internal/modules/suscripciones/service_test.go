@@ -22,6 +22,7 @@ import (
 
 type fakeRepo struct {
 	planes          map[uuid.UUID]suscripciones.Plan
+	complejos       map[uuid.UUID]suscripciones.ComplejoItem
 	createPlanErr   error
 	createCompErr   error
 	lastCreateParam suscripciones.CreateComplejoParams
@@ -31,7 +32,8 @@ type fakeRepo struct {
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
-		planes: make(map[uuid.UUID]suscripciones.Plan),
+		planes:    make(map[uuid.UUID]suscripciones.Plan),
+		complejos: make(map[uuid.UUID]suscripciones.ComplejoItem),
 	}
 }
 
@@ -95,34 +97,36 @@ func (f *fakeRepo) CreateComplejoWithOwner(_ context.Context, params suscripcion
 
 	compID := uuid.New()
 	tel := params.DuenoTelefono
-	return suscripciones.ComplejoDetalleResponse{
-		ComplejoItem: suscripciones.ComplejoItem{
-			ID:                 compID,
-			Slug:               params.Slug,
-			Nombre:             params.Nombre,
-			Departamento:       params.Departamento,
-			Provincia:          params.Provincia,
-			Distrito:           params.Distrito,
-			Publicado:          false,
-			EstadoSuscripcion:  estado,
-			SuscripcionVenceAt: &fin,
-			Dueno: suscripciones.DuenoResumen{
-				ID:             uuid.New(),
-				Email:          params.DuenoEmail,
-				NombreCompleto: params.DuenoNombre,
-				Telefono:       &tel,
-				Activo:         true,
-			},
-			PlanActual: &suscripciones.PlanVigenteResumen{
-				ID:           plan.ID,
-				Codigo:       plan.Codigo,
-				Nombre:       plan.Nombre,
-				Periodicidad: plan.Periodicidad,
-				Precio:       plan.Precio,
-			},
-			CreatedAt: now,
-			UpdatedAt: now,
+	item := suscripciones.ComplejoItem{
+		ID:                 compID,
+		Slug:               params.Slug,
+		Nombre:             params.Nombre,
+		Departamento:       params.Departamento,
+		Provincia:          params.Provincia,
+		Distrito:           params.Distrito,
+		Publicado:          false,
+		EstadoSuscripcion:  estado,
+		SuscripcionVenceAt: &fin,
+		Dueno: suscripciones.DuenoResumen{
+			ID:             uuid.New(),
+			Email:          params.DuenoEmail,
+			NombreCompleto: params.DuenoNombre,
+			Telefono:       &tel,
+			Activo:         true,
 		},
+		PlanActual: &suscripciones.PlanVigenteResumen{
+			ID:           plan.ID,
+			Codigo:       plan.Codigo,
+			Nombre:       plan.Nombre,
+			Periodicidad: plan.Periodicidad,
+			Precio:       plan.Precio,
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	f.complejos[compID] = item
+	return suscripciones.ComplejoDetalleResponse{
+		ComplejoItem: item,
 		Historial: []suscripciones.SuscripcionHistorialItem{
 			{
 				ID:            uuid.New(),
@@ -149,12 +153,24 @@ func (f *fakeRepo) GetComplejoDetail(_ context.Context, _ uuid.UUID) (suscripcio
 	return suscripciones.ComplejoDetalleResponse{}, suscripciones.ErrComplejoNotFound
 }
 
-func (f *fakeRepo) RenovarSuscripcion(_ context.Context, _ suscripciones.RenovarSuscripcionParams) (suscripciones.OperacionSuscripcionResponse, error) {
-	return suscripciones.OperacionSuscripcionResponse{}, suscripciones.ErrComplejoNotFound
+func (f *fakeRepo) RenovarSuscripcion(_ context.Context, params suscripciones.RenovarSuscripcionParams) (suscripciones.OperacionSuscripcionResponse, error) {
+	item, ok := f.complejos[params.ComplejoID]
+	if !ok {
+		return suscripciones.OperacionSuscripcionResponse{}, suscripciones.ErrComplejoNotFound
+	}
+	item.EstadoSuscripcion = suscripciones.EstadoActiva
+	f.complejos[params.ComplejoID] = item
+	return suscripciones.OperacionSuscripcionResponse{ComplejoItem: item}, nil
 }
 
-func (f *fakeRepo) CambiarEstadoSuscripcion(_ context.Context, _ suscripciones.CambiarEstadoParams) (suscripciones.OperacionSuscripcionResponse, error) {
-	return suscripciones.OperacionSuscripcionResponse{}, suscripciones.ErrComplejoNotFound
+func (f *fakeRepo) CambiarEstadoSuscripcion(_ context.Context, params suscripciones.CambiarEstadoParams) (suscripciones.OperacionSuscripcionResponse, error) {
+	item, ok := f.complejos[params.ComplejoID]
+	if !ok {
+		return suscripciones.OperacionSuscripcionResponse{}, suscripciones.ErrComplejoNotFound
+	}
+	item.EstadoSuscripcion = params.NuevoEstado
+	f.complejos[params.ComplejoID] = item
+	return suscripciones.OperacionSuscripcionResponse{ComplejoItem: item}, nil
 }
 
 func (f *fakeRepo) GetMetricasGlobales(_ context.Context) (suscripciones.MetricasGlobalesResponse, error) {
@@ -485,5 +501,78 @@ func TestAdminRoutesRBACAndHTTPErrors(t *testing.T) {
 	router.ServeHTTP(wDupPlan, rDupPlan)
 	if wDupPlan.Code != http.StatusConflict {
 		t.Fatalf("código duplicado esperaba 409 Conflict, obtuvo %d", wDupPlan.Code)
+	}
+}
+
+type spyPublicCacheInvalidator struct {
+	slugs []string
+	err   error
+}
+
+func (s *spyPublicCacheInvalidator) InvalidatePublicComplejo(_ context.Context, slug string) error {
+	s.slugs = append(s.slugs, slug)
+	return s.err
+}
+
+func TestPublicCacheInvalidationOnSuscripcionChanges(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	cache := &fakeMetricsCache{}
+	inv := &spyPublicCacheInvalidator{}
+	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := suscripciones.NewService(repo, cache).WithPublicCacheInvalidator(inv, silentLogger)
+
+	adminID := uuid.New()
+	plan, err := svc.CreatePlan(ctx, suscripciones.CreatePlanRequest{
+		Nombre:           "Mensual Pro",
+		Periodicidad:     "MENSUAL",
+		UnidadDuracion:   "MESES",
+		CantidadDuracion: 1,
+		Precio:           99,
+	})
+	if err != nil {
+		t.Fatalf("CreatePlan falló: %v", err)
+	}
+
+	comp, err := svc.CreateComplejo(ctx, adminID, suscripciones.CreateComplejoRequest{
+		Nombre: "Estadio Huacho",
+		PlanID: plan.ID.String(),
+		Dueno: suscripciones.CreateDuenoInput{
+			Email:          "owner@huacho.pe",
+			Password:       "ClaveSegura2026!",
+			NombreCompleto: "Luis Ramos",
+			Telefono:       "987654321",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateComplejo falló: %v", err)
+	}
+
+	if _, err := svc.RenovarSuscripcion(ctx, adminID, comp.ID, suscripciones.RenovarSuscripcionRequest{
+		PlanID: plan.ID.String(),
+	}); err != nil {
+		t.Fatalf("RenovarSuscripcion falló: %v", err)
+	}
+
+	motivo := "Mantenimiento administrativo"
+	if _, err := svc.CambiarEstadoSuscripcion(ctx, adminID, comp.ID, suscripciones.CambiarEstadoSuscripcionRequest{
+		Estado: "SUSPENDIDA",
+		Motivo: &motivo,
+	}); err != nil {
+		t.Fatalf("CambiarEstadoSuscripcion falló: %v", err)
+	}
+
+	if len(inv.slugs) != 2 || inv.slugs[0] != "estadio-huacho" || inv.slugs[1] != "estadio-huacho" {
+		t.Fatalf("esperaba 2 invalidaciones de slug estadio-huacho, obtenido: %v", inv.slugs)
+	}
+
+	// Si Valkey falla al invalidar, no debe romper la operación principal
+	inv.err = errors.New("valkey connection refused")
+	motivoReact := "Reactivado tras pago"
+	if _, err := svc.CambiarEstadoSuscripcion(ctx, adminID, comp.ID, suscripciones.CambiarEstadoSuscripcionRequest{
+		Estado: "ACTIVA",
+		Motivo: &motivoReact,
+	}); err != nil {
+		t.Fatalf("fallo puntual de Valkey no debe romper CambiarEstadoSuscripcion: %v", err)
 	}
 }

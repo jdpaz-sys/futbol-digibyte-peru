@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -364,4 +365,57 @@ func TestRateLimit(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestRouterCORSPreflightForFrontend(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := NewRouter(RouterConfig{
+		CORSAllowedOrigins: []string{"http://localhost:3000", "http://127.0.0.1:3000"},
+		Logger:             logger,
+		HealthHandler: func(w http.ResponseWriter, _ *http.Request) {
+			WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		},
+	})
+
+	methods := []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete}
+	for _, method := range methods {
+		t.Run("preflight_"+method, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodOptions, "/api/v1/dueno/complejo", nil)
+			req.Header.Set("Origin", "http://localhost:3000")
+			req.Header.Set("Access-Control-Request-Method", method)
+			req.Header.Set("Access-Control-Request-Headers", "Authorization, Content-Type, X-Complejo-ID")
+			rec := httptest.NewRecorder()
+
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
+				t.Fatalf("preflight %s status = %d, esperado 200 o 204", method, rec.Code)
+			}
+			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
+				t.Fatalf("Access-Control-Allow-Origin = %q, esperado http://localhost:3000", got)
+			}
+			if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+				t.Fatalf("Access-Control-Allow-Credentials = %q, esperado true", got)
+			}
+			allowHeaders := strings.ToLower(rec.Header().Get("Access-Control-Allow-Headers"))
+			for _, hdr := range []string{"authorization", "content-type", "x-complejo-id"} {
+				if !strings.Contains(allowHeaders, hdr) {
+					t.Fatalf("Access-Control-Allow-Headers = %q no incluye %q", allowHeaders, hdr)
+				}
+			}
+		})
+	}
+
+	t.Run("origen_no_permitido_rechazado", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/health", nil)
+		req.Header.Set("Origin", "https://malicioso.example.com")
+		req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Fatalf("origen no permitido no debería recibir Access-Control-Allow-Origin, obtenido %q", got)
+		}
+	})
 }

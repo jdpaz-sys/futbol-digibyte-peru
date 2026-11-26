@@ -64,13 +64,18 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 
 	r := chi.NewRouter()
 
+	allowedOrigins := cfg.CORSAllowedOrigins
+	if len(allowedOrigins) == 0 {
+		allowedOrigins = []string{"http://localhost:3000"}
+	}
+
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
 	r.Use(requestLogger(logger))
 	r.Use(jsonRecoverer(logger))
 	r.Use(securityHeaders)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   cfg.CORSAllowedOrigins,
+		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Complejo-ID", "X-Request-ID"},
 		ExposedHeaders:   []string{"X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After"},

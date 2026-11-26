@@ -39,10 +39,17 @@ func (h *Handler) RegisterDuenoRoutes(dueno chi.Router) {
 	dueno.Post("/complejo/publicar", h.handlePublishComplejo)
 	dueno.Post("/complejo/despublicar", h.handleUnpublishComplejo)
 
+	dueno.Get("/fotos", h.handleListFotos)
+	dueno.Post("/fotos", h.handleUploadFoto)
+	dueno.Patch("/fotos/{fotoID}", h.handleUpdateFoto)
+	dueno.Delete("/fotos/{fotoID}", h.handleDeleteFoto)
+
 	dueno.Get("/canchas", h.handleListCanchas)
 	dueno.Post("/canchas", h.handleCreateCancha)
 	dueno.Patch("/canchas/{canchaID}", h.handleUpdateCancha)
 	dueno.Delete("/canchas/{canchaID}", h.handleDeactivateCancha)
+	dueno.Post("/canchas/{canchaID}/foto", h.handleUploadCanchaFoto)
+	dueno.Delete("/canchas/{canchaID}/foto", h.handleDeleteCanchaFoto)
 
 	dueno.Get("/horarios", h.handleListHorarios)
 	dueno.Put("/horarios", h.handleUpsertHorarios)
@@ -60,6 +67,8 @@ func (h *Handler) RegisterDuenoRoutes(dueno chi.Router) {
 	dueno.Post("/metodos-pago", h.handleCreateMetodoPago)
 	dueno.Patch("/metodos-pago/{metodoID}", h.handleUpdateMetodoPago)
 	dueno.Delete("/metodos-pago/{metodoID}", h.handleDeactivateMetodoPago)
+	dueno.Post("/metodos-pago/{metodoID}/qr", h.handleUploadMetodoPagoQR)
+	dueno.Delete("/metodos-pago/{metodoID}/qr", h.handleDeleteMetodoPagoQR)
 }
 
 // ---------- Complejo ----------
@@ -605,12 +614,24 @@ func (h *Handler) writeServiceError(w http.ResponseWriter, r *http.Request, even
 		apphttp.WriteError(w, http.StatusNotFound, "COMPLEJO_NOT_FOUND", "Complejo deportivo no encontrado")
 	case errors.Is(err, ErrCanchaNotFound):
 		apphttp.WriteError(w, http.StatusNotFound, "CANCHA_NOT_FOUND", "Cancha no encontrada en este complejo")
+	case errors.Is(err, ErrFotoNotFound):
+		apphttp.WriteError(w, http.StatusNotFound, "FOTO_NOT_FOUND", "Foto del complejo no encontrada")
 	case errors.Is(err, ErrTarifaNotFound):
 		apphttp.WriteError(w, http.StatusNotFound, "TARIFA_NOT_FOUND", "Tarifa por franja no encontrada")
 	case errors.Is(err, ErrCuponNotFound):
 		apphttp.WriteError(w, http.StatusNotFound, "CUPON_NOT_FOUND", "Cupón no encontrado")
 	case errors.Is(err, ErrMetodoPagoNotFound):
 		apphttp.WriteError(w, http.StatusNotFound, "METODO_PAGO_NOT_FOUND", "Método de pago no encontrado")
+	case errors.Is(err, ErrMetodoPagoNoQR):
+		apphttp.WriteError(w, http.StatusBadRequest, "METODO_PAGO_NO_QR", ErrMetodoPagoNoQR.Error())
+	case errors.Is(err, ErrFileTooLarge):
+		apphttp.WriteError(w, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE", ErrFileTooLarge.Error())
+	case errors.Is(err, ErrInvalidFileType):
+		apphttp.WriteError(w, http.StatusBadRequest, "INVALID_FILE_TYPE", ErrInvalidFileType.Error())
+	case errors.Is(err, ErrMediaNotFound):
+		apphttp.WriteError(w, http.StatusNotFound, "MEDIA_NOT_FOUND", ErrMediaNotFound.Error())
+	case errors.Is(err, ErrMediaForbidden):
+		apphttp.WriteError(w, http.StatusForbidden, "FORBIDDEN", ErrMediaForbidden.Error())
 	case errors.Is(err, ErrTarifaOverlap):
 		apphttp.WriteError(w, http.StatusConflict, "TARIFA_OVERLAP", "La franja horaria se solapa con otra tarifa activa para el mismo día y alcance")
 	case errors.Is(err, ErrCuponCodeAlreadyExists):

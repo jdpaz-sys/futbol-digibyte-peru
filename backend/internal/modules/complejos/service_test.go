@@ -9,8 +9,10 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -27,19 +29,21 @@ const testAESKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef012345678
 // ---------- Repositorio en memoria para pruebas unitarias y de aislamiento multi-tenant ----------
 
 type memoryRepo struct {
-	complejos   map[uuid.UUID]ComplejoPerfil
-	canchas     map[uuid.UUID]Cancha
-	horarios    map[uuid.UUID][]HorarioAtencion
-	tarifas     map[uuid.UUID]TarifaFranja
-	cupones     map[uuid.UUID]Cupon
-	metodos     map[uuid.UUID]MetodoPago
-	rawCreds    map[uuid.UUID][]byte
-	owners      map[uuid.UUID]uuid.UUID // complejoID -> duenoID
+	complejos map[uuid.UUID]ComplejoPerfil
+	fotos     map[uuid.UUID]ComplejoFoto
+	canchas   map[uuid.UUID]Cancha
+	horarios  map[uuid.UUID][]HorarioAtencion
+	tarifas   map[uuid.UUID]TarifaFranja
+	cupones   map[uuid.UUID]Cupon
+	metodos   map[uuid.UUID]MetodoPago
+	rawCreds  map[uuid.UUID][]byte
+	owners    map[uuid.UUID]uuid.UUID // complejoID -> duenoID
 }
 
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
 		complejos: make(map[uuid.UUID]ComplejoPerfil),
+		fotos:     make(map[uuid.UUID]ComplejoFoto),
 		canchas:   make(map[uuid.UUID]Cancha),
 		horarios:  make(map[uuid.UUID][]HorarioAtencion),
 		tarifas:   make(map[uuid.UUID]TarifaFranja),
@@ -112,6 +116,114 @@ func (m *memoryRepo) GetComplejo(_ context.Context, complejoID uuid.UUID) (Compl
 		return ComplejoPerfil{}, ErrComplejoNotFound
 	}
 	return m.withChecklist(p), nil
+}
+
+func (m *memoryRepo) GetComplejoSlug(_ context.Context, complejoID uuid.UUID) (string, error) {
+	p, ok := m.complejos[complejoID]
+	if !ok {
+		return "", ErrComplejoNotFound
+	}
+	return p.Slug, nil
+}
+
+func (m *memoryRepo) ListFotos(_ context.Context, complejoID uuid.UUID) ([]ComplejoFoto, error) {
+	out := make([]ComplejoFoto, 0)
+	for _, f := range m.fotos {
+		if f.ComplejoID == complejoID {
+			out = append(out, f)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Orden != out[j].Orden {
+			return out[i].Orden < out[j].Orden
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (m *memoryRepo) CreateFoto(_ context.Context, foto ComplejoFoto) (ComplejoFoto, error) {
+	if _, ok := m.complejos[foto.ComplejoID]; !ok {
+		return ComplejoFoto{}, ErrComplejoNotFound
+	}
+	if foto.ID == uuid.Nil {
+		foto.ID = uuid.New()
+	}
+	if foto.EsPortada {
+		for id, f := range m.fotos {
+			if f.ComplejoID == foto.ComplejoID && f.EsPortada {
+				f.EsPortada = false
+				m.fotos[id] = f
+			}
+		}
+	}
+	foto.CreatedAt = time.Now().UTC()
+	m.fotos[foto.ID] = foto
+	return foto, nil
+}
+
+func (m *memoryRepo) UpdateFoto(_ context.Context, complejoID, fotoID uuid.UUID, descripcion *string, updateDescripcion bool, orden *int16, esPortada *bool) (ComplejoFoto, error) {
+	f, ok := m.fotos[fotoID]
+	if !ok || f.ComplejoID != complejoID {
+		return ComplejoFoto{}, ErrFotoNotFound
+	}
+	if updateDescripcion {
+		f.Descripcion = descripcion
+	}
+	if orden != nil {
+		f.Orden = *orden
+	}
+	if esPortada != nil {
+		if *esPortada {
+			for id, other := range m.fotos {
+				if other.ComplejoID == complejoID && other.EsPortada && id != fotoID {
+					other.EsPortada = false
+					m.fotos[id] = other
+				}
+			}
+		}
+		f.EsPortada = *esPortada
+	}
+	m.fotos[fotoID] = f
+	return f, nil
+}
+
+func (m *memoryRepo) DeleteFoto(_ context.Context, complejoID, fotoID uuid.UUID) (*string, error) {
+	f, ok := m.fotos[fotoID]
+	if !ok || f.ComplejoID != complejoID {
+		return nil, ErrFotoNotFound
+	}
+	delete(m.fotos, fotoID)
+	return f.StorageKey, nil
+}
+
+func (m *memoryRepo) SetCanchaFoto(_ context.Context, complejoID, canchaID uuid.UUID, fotoURL, fotoStorageKey *string) (Cancha, *string, *string, error) {
+	c, ok := m.canchas[canchaID]
+	if !ok || c.ComplejoID != complejoID {
+		return Cancha{}, nil, nil, ErrCanchaNotFound
+	}
+	prevKey, prevURL := c.FotoStorageKey, c.FotoURL
+	c.FotoURL = fotoURL
+	c.FotoStorageKey = fotoStorageKey
+	c.UpdatedAt = time.Now().UTC()
+	m.canchas[canchaID] = c
+	return c, prevKey, prevURL, nil
+}
+
+func (m *memoryRepo) SetMetodoPagoQR(_ context.Context, complejoID, metodoID uuid.UUID, qrURL, qrStorageKey *string, requireWalletType bool) (MetodoPago, *string, *string, error) {
+	mp, ok := m.metodos[metodoID]
+	if !ok || mp.ComplejoID != complejoID {
+		return MetodoPago{}, nil, nil, ErrMetodoPagoNotFound
+	}
+	if requireWalletType && mp.Tipo != MetodoPagoYape && mp.Tipo != MetodoPagoPlin {
+		return MetodoPago{}, nil, nil, ErrMetodoPagoNoQR
+	}
+	prevKey, prevURL := mp.QRStorageKey, mp.QRURL
+	mp.QRURL = qrURL
+	mp.QRStorageKey = qrStorageKey
+	mp.UpdatedAt = time.Now().UTC()
+	m.metodos[metodoID] = mp
+	return mp, prevKey, prevURL, nil
 }
 
 func (m *memoryRepo) UpdateComplejo(_ context.Context, params UpdateComplejoParams) (ComplejoPerfil, error) {
@@ -1015,5 +1127,288 @@ func TestHorariosCuponesAndTransferenciaValidations(t *testing.T) {
 	deactivated, err := svc.DeactivateMetodoPago(ctx, complejoID, transfer.ID)
 	if err != nil || deactivated.Activo {
 		t.Fatalf("DeactivateMetodoPago falló: err=%v, activo=%v", err, deactivated.Activo)
+	}
+}
+
+type spyCacheInvalidator struct {
+	slugs []string
+	err   error
+}
+
+func (s *spyCacheInvalidator) InvalidatePublicComplejo(_ context.Context, slug string) error {
+	s.slugs = append(s.slugs, slug)
+	return s.err
+}
+
+func buildMultipartImageRequest(t *testing.T, method, target, fieldName, fileName string, content []byte, extra map[string]string) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile(fieldName, fileName)
+	if err != nil {
+		t.Fatalf("CreateFormFile falló: %v", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		t.Fatalf("Write file part falló: %v", err)
+	}
+	for k, v := range extra {
+		if err := mw.WriteField(k, v); err != nil {
+			t.Fatalf("WriteField %s falló: %v", k, err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("multipart Close falló: %v", err)
+	}
+	req := httptest.NewRequest(method, target, &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	return req
+}
+
+func TestMultimediaEndpointsPublicSecurityAndCacheInvalidation(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryRepo()
+	duenoID := uuid.New()
+	complejoID := uuid.New()
+	repo.seedComplejo(duenoID, complejoID, "Complejo Media Huacho")
+
+	tmpStorage, err := db.NewLocalFileStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalFileStorage falló: %v", err)
+	}
+	inv := &spyCacheInvalidator{}
+	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	svc := NewService(repo, mustNewTestCipher(t)).
+		WithStorage(tmpStorage).
+		WithPublicCacheInvalidator(inv).
+		WithLogger(silentLogger)
+	handler := NewHandler(svc, silentLogger)
+
+	parseToken := func(token string) (apphttp.AuthUser, error) {
+		if token == "tok-dueno" {
+			return apphttp.AuthUser{UserID: duenoID, Rol: apphttp.RoleDueno, ComplejoID: &complejoID}, nil
+		}
+		return apphttp.AuthUser{}, errors.New("invalid token")
+	}
+	tenantChecker := func(_ context.Context, userID, cID uuid.UUID) (bool, error) {
+		return userID == duenoID && cID == complejoID, nil
+	}
+
+	router := apphttp.NewRouter(apphttp.RouterConfig{
+		Logger:        silentLogger,
+		TokenParser:   parseToken,
+		TenantChecker: tenantChecker,
+		MountPublic:   handler.RegisterPublicRoutes,
+		MountDueno:    handler.RegisterDuenoRoutes,
+	})
+
+	// Sembrar un voucher privado fuera de public/ para verificar que jamás sea servido por /api/v1/public/media/*
+	pngBytes := append([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, bytes.Repeat([]byte{0x11}, 32)...)
+	jpegBytes := append([]byte{0xFF, 0xD8, 0xFF, 0xE0}, bytes.Repeat([]byte{0x22}, 32)...)
+	if err := tmpStorage.Save(ctx, "comprobantes/privado/voucher.png", "image/png", bytes.NewReader(pngBytes)); err != nil {
+		t.Fatalf("error sembrando voucher privado: %v", err)
+	}
+
+	// 1. Subir 2 fotos (primera portada, luego promover segunda a portada)
+	req1 := buildMultipartImageRequest(t, http.MethodPost, "/api/v1/dueno/fotos", "archivo", "foto1.png", pngBytes, map[string]string{
+		"es_portada": "true",
+		"orden":      "2",
+	})
+	req1.Header.Set("Authorization", "Bearer tok-dueno")
+	rec1 := httptest.NewRecorder()
+	router.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusCreated {
+		t.Fatalf("POST /dueno/fotos #1 status=%d body=%s", rec1.Code, rec1.Body.String())
+	}
+	var env1 struct {
+		Data ComplejoFoto `json:"data"`
+	}
+	_ = json.Unmarshal(rec1.Body.Bytes(), &env1)
+	if !env1.Data.EsPortada || !strings.HasPrefix(env1.Data.URL, "/api/v1/public/media/public/") {
+		t.Fatalf("foto #1 inesperada: %+v", env1.Data)
+	}
+
+	req2 := buildMultipartImageRequest(t, http.MethodPost, "/api/v1/dueno/fotos", "archivo", "foto2.jpg", jpegBytes, map[string]string{
+		"es_portada": "false",
+		"orden":      "1",
+	})
+	req2.Header.Set("Authorization", "Bearer tok-dueno")
+	rec2 := httptest.NewRecorder()
+	router.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusCreated {
+		t.Fatalf("POST /dueno/fotos #2 status=%d body=%s", rec2.Code, rec2.Body.String())
+	}
+	var env2 struct {
+		Data ComplejoFoto `json:"data"`
+	}
+	_ = json.Unmarshal(rec2.Body.Bytes(), &env2)
+
+	// Promover foto #2 a portada
+	reqPromote := httptest.NewRequest(http.MethodPatch, "/api/v1/dueno/fotos/"+env2.Data.ID.String(), bytes.NewBufferString(`{"es_portada":true,"orden":0}`))
+	reqPromote.Header.Set("Authorization", "Bearer tok-dueno")
+	recPromote := httptest.NewRecorder()
+	router.ServeHTTP(recPromote, reqPromote)
+	if recPromote.Code != http.StatusOK {
+		t.Fatalf("PATCH /dueno/fotos status=%d body=%s", recPromote.Code, recPromote.Body.String())
+	}
+
+	// Listar fotos ordenadas por orden y verificar única portada
+	reqList := httptest.NewRequest(http.MethodGet, "/api/v1/dueno/fotos", nil)
+	reqList.Header.Set("Authorization", "Bearer tok-dueno")
+	recList := httptest.NewRecorder()
+	router.ServeHTTP(recList, reqList)
+	var listEnv struct {
+		Data []ComplejoFoto `json:"data"`
+	}
+	_ = json.Unmarshal(recList.Body.Bytes(), &listEnv)
+	if len(listEnv.Data) != 2 || listEnv.Data[0].ID != env2.Data.ID || !listEnv.Data[0].EsPortada || listEnv.Data[1].EsPortada {
+		t.Fatalf("orden o portada única incorrecta: %+v", listEnv.Data)
+	}
+
+	// 2. Descarga pública 200 con Content-Type y Cache-Control
+	reqMedia := httptest.NewRequest(http.MethodGet, env2.Data.URL, nil)
+	recMedia := httptest.NewRecorder()
+	router.ServeHTTP(recMedia, reqMedia)
+	if recMedia.Code != http.StatusOK {
+		t.Fatalf("GET media pública esperaba 200, obtuvo %d (%s)", recMedia.Code, recMedia.Body.String())
+	}
+	if got := recMedia.Header().Get("Content-Type"); got != "image/jpeg" {
+		t.Fatalf("Content-Type = %q, esperado image/jpeg", got)
+	}
+	if got := recMedia.Header().Get("Cache-Control"); got != "public, max-age=86400" {
+		t.Fatalf("Cache-Control = %q, esperado public, max-age=86400", got)
+	}
+
+	// 3. Seguridad estricta: vouchers privados y traversal bloqueados (403/404)
+	for _, blocked := range []string{
+		"/api/v1/public/media/comprobantes/privado/voucher.png",
+		"/api/v1/public/media/public/../../comprobantes/privado/voucher.png",
+		"/api/v1/public/media/public/%2e%2e/comprobantes/privado/voucher.png",
+		"/api/v1/public/media/secret.txt",
+	} {
+		recBlk := httptest.NewRecorder()
+		router.ServeHTTP(recBlk, httptest.NewRequest(http.MethodGet, blocked, nil))
+		if recBlk.Code != http.StatusForbidden && recBlk.Code != http.StatusNotFound {
+			t.Fatalf("ruta privada/traversal %q debía devolver 403 o 404, obtuvo %d", blocked, recBlk.Code)
+		}
+	}
+
+	// Archivo falso (texto plano) rechazado con 400 INVALID_FILE_TYPE
+	reqFake := buildMultipartImageRequest(t, http.MethodPost, "/api/v1/dueno/fotos", "archivo", "mal.jpg", []byte("<html>not an image</html>"), nil)
+	reqFake.Header.Set("Authorization", "Bearer tok-dueno")
+	recFake := httptest.NewRecorder()
+	router.ServeHTTP(recFake, reqFake)
+	if recFake.Code != http.StatusBadRequest {
+		t.Fatalf("archivo no-imagen debía responder 400, obtuvo %d", recFake.Code)
+	}
+
+	// 4. Eliminar foto #1 borra fila y archivo físico en Storage
+	reqDelFoto := httptest.NewRequest(http.MethodDelete, "/api/v1/dueno/fotos/"+env1.Data.ID.String(), nil)
+	reqDelFoto.Header.Set("Authorization", "Bearer tok-dueno")
+	recDelFoto := httptest.NewRecorder()
+	router.ServeHTTP(recDelFoto, reqDelFoto)
+	if recDelFoto.Code != http.StatusOK {
+		t.Fatalf("DELETE /dueno/fotos status=%d body=%s", recDelFoto.Code, recDelFoto.Body.String())
+	}
+	if _, err := tmpStorage.Open(ctx, *env1.Data.StorageKey); !errors.Is(err, db.ErrObjectNotFound) {
+		t.Fatalf("archivo de foto eliminada debía borrarse en Storage, err=%v", err)
+	}
+
+	// 5. Foto de cancha: subir, reemplazar (borra anterior) y eliminar
+	cancha, err := svc.CreateCancha(ctx, complejoID, CreateCanchaRequest{Nombre: "Cancha 1", Modalidad: "6v6"})
+	if err != nil {
+		t.Fatalf("CreateCancha falló: %v", err)
+	}
+	reqCancha1 := buildMultipartImageRequest(t, http.MethodPost, "/api/v1/dueno/canchas/"+cancha.ID.String()+"/foto", "archivo", "c1.png", pngBytes, nil)
+	reqCancha1.Header.Set("Authorization", "Bearer tok-dueno")
+	recCancha1 := httptest.NewRecorder()
+	router.ServeHTTP(recCancha1, reqCancha1)
+	if recCancha1.Code != http.StatusOK {
+		t.Fatalf("POST cancha foto #1 status=%d body=%s", recCancha1.Code, recCancha1.Body.String())
+	}
+	var cEnv1 struct {
+		Data Cancha `json:"data"`
+	}
+	_ = json.Unmarshal(recCancha1.Body.Bytes(), &cEnv1)
+	oldCanchaKey := *cEnv1.Data.FotoStorageKey
+
+	reqCancha2 := buildMultipartImageRequest(t, http.MethodPost, "/api/v1/dueno/canchas/"+cancha.ID.String()+"/foto", "archivo", "c2.jpg", jpegBytes, nil)
+	reqCancha2.Header.Set("Authorization", "Bearer tok-dueno")
+	recCancha2 := httptest.NewRecorder()
+	router.ServeHTTP(recCancha2, reqCancha2)
+	if recCancha2.Code != http.StatusOK {
+		t.Fatalf("POST cancha foto #2 status=%d", recCancha2.Code)
+	}
+	if _, err := tmpStorage.Open(ctx, oldCanchaKey); !errors.Is(err, db.ErrObjectNotFound) {
+		t.Fatalf("foto anterior de cancha debía borrarse al reemplazar, err=%v", err)
+	}
+	reqDelCancha := httptest.NewRequest(http.MethodDelete, "/api/v1/dueno/canchas/"+cancha.ID.String()+"/foto", nil)
+	reqDelCancha.Header.Set("Authorization", "Bearer tok-dueno")
+	recDelCancha := httptest.NewRecorder()
+	router.ServeHTTP(recDelCancha, reqDelCancha)
+	if recDelCancha.Code != http.StatusOK {
+		t.Fatalf("DELETE cancha foto status=%d", recDelCancha.Code)
+	}
+
+	// 6. QR de método de pago: permitido en YAPE, rechazado en TRANSFERENCIA
+	yape, err := svc.CreateMetodoPago(ctx, complejoID, CreateMetodoPagoRequest{
+		Tipo:          "YAPE",
+		Titular:       ptrStr("Complejo SAC"),
+		NumeroDestino: ptrStr("987654321"),
+	})
+	if err != nil {
+		t.Fatalf("CreateMetodoPago YAPE falló: %v", err)
+	}
+	transfer, err := svc.CreateMetodoPago(ctx, complejoID, CreateMetodoPagoRequest{
+		Tipo:              "TRANSFERENCIA",
+		Titular:           ptrStr("Complejo SAC"),
+		EntidadFinanciera: ptrStr("BCP"),
+		NumeroDestino:     ptrStr("191-1234567-0-11"),
+	})
+	if err != nil {
+		t.Fatalf("CreateMetodoPago TRANSFERENCIA falló: %v", err)
+	}
+
+	reqBadQR := buildMultipartImageRequest(t, http.MethodPost, "/api/v1/dueno/metodos-pago/"+transfer.ID.String()+"/qr", "archivo", "qr.png", pngBytes, nil)
+	reqBadQR.Header.Set("Authorization", "Bearer tok-dueno")
+	recBadQR := httptest.NewRecorder()
+	router.ServeHTTP(recBadQR, reqBadQR)
+	if recBadQR.Code != http.StatusBadRequest {
+		t.Fatalf("QR en TRANSFERENCIA debía fallar con 400, obtuvo %d", recBadQR.Code)
+	}
+
+	reqQR := buildMultipartImageRequest(t, http.MethodPost, "/api/v1/dueno/metodos-pago/"+yape.ID.String()+"/qr", "archivo", "qr.png", pngBytes, nil)
+	reqQR.Header.Set("Authorization", "Bearer tok-dueno")
+	recQR := httptest.NewRecorder()
+	router.ServeHTTP(recQR, reqQR)
+	if recQR.Code != http.StatusOK {
+		t.Fatalf("POST QR YAPE status=%d body=%s", recQR.Code, recQR.Body.String())
+	}
+	var qrEnv struct {
+		Data MetodoPago `json:"data"`
+	}
+	_ = json.Unmarshal(recQR.Body.Bytes(), &qrEnv)
+	if qrEnv.Data.QRURL == nil || qrEnv.Data.QRStorageKey == nil || !strings.HasPrefix(*qrEnv.Data.QRURL, "/api/v1/public/media/public/") {
+		t.Fatalf("QR YAPE inesperado: %+v", qrEnv.Data)
+	}
+
+	reqDelQR := httptest.NewRequest(http.MethodDelete, "/api/v1/dueno/metodos-pago/"+yape.ID.String()+"/qr", nil)
+	reqDelQR.Header.Set("Authorization", "Bearer tok-dueno")
+	recDelQR := httptest.NewRecorder()
+	router.ServeHTTP(recDelQR, reqDelQR)
+	if recDelQR.Code != http.StatusOK {
+		t.Fatalf("DELETE QR YAPE status=%d", recDelQR.Code)
+	}
+	if _, err := tmpStorage.Open(ctx, *qrEnv.Data.QRStorageKey); !errors.Is(err, db.ErrObjectNotFound) {
+		t.Fatalf("archivo QR debía borrarse de Storage, err=%v", err)
+	}
+
+	// 7. Invalidación de caché ejecutada y tolerante a fallo de Valkey
+	if len(inv.slugs) == 0 {
+		t.Fatal("esperaba invalidaciones de caché pública tras las mutaciones")
+	}
+	inv.err = errors.New("valkey down")
+	if _, err := svc.UpdateComplejo(ctx, complejoID, UpdateComplejoRequest{Nombre: ptrStr("Complejo Actualizado")}); err != nil {
+		t.Fatalf("fallo puntual de Valkey no debía romper UpdateComplejo: %v", err)
 	}
 }

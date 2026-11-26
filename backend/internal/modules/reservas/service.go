@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"math"
-	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -36,10 +35,11 @@ var (
 
 // Service concentra la lógica de negocio de disponibilidad, cotización, Holds y comprobantes.
 type Service struct {
-	repo    Store
-	storage db.FileStorage
-	logger  *slog.Logger
-	now     func() time.Time
+	repo           Store
+	storage        db.FileStorage
+	pushDispatcher PushDispatcher
+	logger         *slog.Logger
+	now            func() time.Time
 }
 
 // NewService crea una nueva instancia del servicio de reservas.
@@ -52,6 +52,32 @@ func NewService(repo Store, storage db.FileStorage, logger *slog.Logger) *Servic
 		storage: storage,
 		logger:  logger,
 		now:     time.Now,
+	}
+}
+
+// WithPushDispatcher inyecta el despachador opcional de notificaciones Web Push (VAPID).
+func (s *Service) WithPushDispatcher(dispatcher PushDispatcher) *Service {
+	s.pushDispatcher = dispatcher
+	return s
+}
+
+// GetPushConfig expone la configuración pública de Web Push PWA (enabled y vapid_public_key).
+func (s *Service) GetPushConfig() PushConfigResponse {
+	if s.pushDispatcher == nil || !s.pushDispatcher.Enabled() {
+		return PushConfigResponse{
+			Enabled:        false,
+			VAPIDPublicKey: "",
+		}
+	}
+	return PushConfigResponse{
+		Enabled:        true,
+		VAPIDPublicKey: s.pushDispatcher.VAPIDPublicKey(),
+	}
+}
+
+func (s *Service) dispatchPushAsync(ctx context.Context, msg PushMessage) {
+	if s.pushDispatcher != nil && s.pushDispatcher.Enabled() {
+		s.pushDispatcher.DispatchAsync(ctx, msg)
 	}
 }
 
@@ -571,35 +597,5 @@ func parseISO8601(raw string) (time.Time, error) {
 }
 
 func detectAllowedImageMIME(data []byte) (mimeType string, ext string, ok bool) {
-	if len(data) < 12 {
-		return "", "", false
-	}
-
-	sniffLen := len(data)
-	if sniffLen > 512 {
-		sniffLen = 512
-	}
-	detected := http.DetectContentType(data[:sniffLen])
-
-	switch detected {
-	case "image/jpeg":
-		if bytes.HasPrefix(data, []byte{0xFF, 0xD8, 0xFF}) {
-			return "image/jpeg", ".jpg", true
-		}
-	case "image/png":
-		if bytes.HasPrefix(data, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}) {
-			return "image/png", ".png", true
-		}
-	case "image/webp":
-		if bytes.Equal(data[0:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")) {
-			return "image/webp", ".webp", true
-		}
-	}
-
-	// Fallback defensivo para contenedores WebP válidos con encabezados RIFF....WEBP (ej. VP8X/ANIM).
-	if bytes.Equal(data[0:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")) {
-		return "image/webp", ".webp", true
-	}
-
-	return "", "", false
+	return db.DetectAllowedImageMIME(data)
 }

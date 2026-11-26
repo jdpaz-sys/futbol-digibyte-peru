@@ -8,11 +8,12 @@ import (
 )
 
 var (
-	ErrEmailAlreadyExists = errors.New("el correo electrónico ya está registrado")
-	ErrInvalidCredentials = errors.New("credenciales inválidas")
-	ErrAccountInactive    = errors.New("la cuenta se encuentra desactivada")
-	ErrInvalidToken       = errors.New("token inválido o expirado")
-	ErrUserNotFound       = errors.New("usuario no encontrado")
+	ErrEmailAlreadyExists     = errors.New("el correo electrónico ya está registrado")
+	ErrInvalidCredentials     = errors.New("credenciales inválidas")
+	ErrInvalidCurrentPassword = errors.New("la contraseña actual es incorrecta")
+	ErrAccountInactive        = errors.New("la cuenta se encuentra desactivada")
+	ErrInvalidToken           = errors.New("token inválido o expirado")
+	ErrUserNotFound           = errors.New("usuario no encontrado")
 )
 
 // ValidationError agrupa errores de validación de entrada por campo.
@@ -115,4 +116,22 @@ type MeResponse struct {
 // MessageResponse devuelve una confirmación textual simple.
 type MessageResponse struct {
 	Message string `json:"message"`
+}
+
+// UpdateProfileRequest contiene los campos editables por el usuario en PATCH /api/v1/auth/me.
+type UpdateProfileRequest struct {
+	NombreCompleto *string `json:"nombre_completo"`
+	Telefono       *string `json:"telefono"`
+}
+
+// ChangePasswordRequest exige la contraseña actual y la nueva contraseña en POST /api/v1/auth/change-password.
+type ChangePasswordRequest struct {
+	PasswordActual string `json:"password_actual"`
+	PasswordNueva  string `json:"password_nueva"`
+}
+
+// ChangePasswordResponse confirma el cambio de contraseña y el estado de revocación de sesiones activas.
+type ChangePasswordResponse struct {
+	Message           string `json:"message"`
+	SesionesRevocadas bool   `json:"sesiones_revocadas"`
 }

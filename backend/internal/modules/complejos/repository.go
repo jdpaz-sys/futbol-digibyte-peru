@@ -17,15 +17,22 @@ import (
 // Repository define las operaciones de persistencia aisladas por complejo_id (RN-01).
 type Repository interface {
 	GetComplejo(ctx context.Context, complejoID uuid.UUID) (ComplejoPerfil, error)
+	GetComplejoSlug(ctx context.Context, complejoID uuid.UUID) (string, error)
 	UpdateComplejo(ctx context.Context, params UpdateComplejoParams) (ComplejoPerfil, error)
 	PublishComplejo(ctx context.Context, complejoID uuid.UUID) (ComplejoPerfil, error)
 	UnpublishComplejo(ctx context.Context, complejoID uuid.UUID) (ComplejoPerfil, error)
+
+	ListFotos(ctx context.Context, complejoID uuid.UUID) ([]ComplejoFoto, error)
+	CreateFoto(ctx context.Context, foto ComplejoFoto) (ComplejoFoto, error)
+	UpdateFoto(ctx context.Context, complejoID, fotoID uuid.UUID, descripcion *string, updateDescripcion bool, orden *int16, esPortada *bool) (ComplejoFoto, error)
+	DeleteFoto(ctx context.Context, complejoID, fotoID uuid.UUID) (*string, error)
 
 	ListCanchas(ctx context.Context, complejoID uuid.UUID, activa *bool) ([]Cancha, error)
 	GetCancha(ctx context.Context, complejoID, canchaID uuid.UUID) (Cancha, error)
 	CreateCancha(ctx context.Context, c Cancha) (Cancha, error)
 	UpdateCancha(ctx context.Context, c Cancha) (Cancha, error)
 	DeactivateCancha(ctx context.Context, complejoID, canchaID uuid.UUID) (Cancha, error)
+	SetCanchaFoto(ctx context.Context, complejoID, canchaID uuid.UUID, fotoURL, fotoStorageKey *string) (Cancha, *string, *string, error)
 
 	ListHorarios(ctx context.Context, complejoID uuid.UUID) ([]HorarioAtencion, error)
 	UpsertHorarios(ctx context.Context, complejoID uuid.UUID, horarios []HorarioAtencion) ([]HorarioAtencion, error)
@@ -46,6 +53,7 @@ type Repository interface {
 	CreateMetodoPago(ctx context.Context, p SaveMetodoPagoParams) (MetodoPago, error)
 	UpdateMetodoPago(ctx context.Context, p SaveMetodoPagoParams) (MetodoPago, error)
 	DeactivateMetodoPago(ctx context.Context, complejoID, metodoID uuid.UUID) (MetodoPago, error)
+	SetMetodoPagoQR(ctx context.Context, complejoID, metodoID uuid.UUID, qrURL, qrStorageKey *string, requireWalletType bool) (MetodoPago, *string, *string, error)
 }
 
 type rowScanner interface {
@@ -99,6 +107,18 @@ const complejoSelectBase = `
 
 func (r *PostgresRepository) GetComplejo(ctx context.Context, complejoID uuid.UUID) (ComplejoPerfil, error) {
 	return queryComplejoPerfil(ctx, r.pool, complejoSelectBase, complejoID)
+}
+
+func (r *PostgresRepository) GetComplejoSlug(ctx context.Context, complejoID uuid.UUID) (string, error) {
+	var slug string
+	err := r.pool.QueryRow(ctx, `SELECT slug FROM complejos WHERE id = $1`, complejoID).Scan(&slug)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrComplejoNotFound
+		}
+		return "", fmt.Errorf("error consultando slug del complejo: %w", err)
+	}
+	return slug, nil
 }
 
 func (r *PostgresRepository) UpdateComplejo(ctx context.Context, params UpdateComplejoParams) (ComplejoPerfil, error) {

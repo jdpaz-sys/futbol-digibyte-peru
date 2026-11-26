@@ -71,18 +71,24 @@ const (
 	NotifReservaCancelada      = "RESERVA_CANCELADA"
 	NotifReservaReprogramada   = "RESERVA_REPROGRAMADA"
 	NotifReembolsoResuelto     = "REEMBOLSO_RESUELTO"
+	NotifSuscripcionVencida    = "SUSCRIPCION_VENCIDA"
+	NotifSuscripcionPorVencer  = "SUSCRIPCION_POR_VENCER"
+	NotifRecordatorioPartido   = "RECORDATORIO_PARTIDO"
 
 	ZonaHorariaLima = "America/Lima"
 
-	DefaultListLimit       = 20
-	MaxListLimit           = 50
-	DefaultDuenoListLimit  = 50
-	MaxDuenoListLimit      = 100
-	MaxEvidenciaBytes      = 5 << 20 // 5 MiB
-	MaxPrecioMonto         = 99999999.99
-	DefaultWorkerInterval  = 30 * time.Second
-	DefaultWorkerBatchSize = 100
-	AlertaDemoraThreshold  = 30 * time.Minute
+	DefaultListLimit                 = 20
+	MaxListLimit                     = 50
+	DefaultDuenoListLimit            = 50
+	MaxDuenoListLimit                = 100
+	MaxEvidenciaBytes                = 5 << 20 // 5 MiB
+	MaxPrecioMonto                   = 99999999.99
+	DefaultWorkerInterval            = 30 * time.Second
+	DefaultMaintenanceInterval       = 5 * time.Minute
+	DefaultWorkerBatchSize           = 100
+	AlertaDemoraThreshold            = 30 * time.Minute
+	ExpiringSubscriptionNoticeWindow = 3 * 24 * time.Hour
+	UpcomingMatchReminderWindow      = 2 * time.Hour
 )
 
 var (

@@ -117,6 +117,18 @@ func (c *ValkeyCache) SetPublicComplejo(ctx context.Context, slug string, val Pu
 	return c.client.Set(ctx, publicSlugCacheKeyPrefix+slug, payload, ttl).Err()
 }
 
+// InvalidatePublicComplejo elimina inmediatamente de Valkey la ficha pública cacheada de un complejo por slug.
+func (c *ValkeyCache) InvalidatePublicComplejo(ctx context.Context, slug string) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+	cleanSlug := strings.ToLower(strings.TrimSpace(slug))
+	if cleanSlug == "" {
+		return nil
+	}
+	return c.client.Del(ctx, publicSlugCacheKeyPrefix+cleanSlug).Err()
+}
+
 // ServiceConfig parametriza el cliente geocoder externo y utilidades del servicio.
 type ServiceConfig struct {
 	GeocoderBaseURL   string

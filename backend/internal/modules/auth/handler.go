@@ -47,6 +47,14 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 
 		ar.With(apphttp.RequireAuth(h.service.ParseAccessToken)).
 			Get("/me", h.Me)
+
+		ar.With(apphttp.RequireAuth(h.service.ParseAccessToken)).
+			Patch("/me", h.UpdateMe)
+
+		ar.With(
+			apphttp.RequireAuth(h.service.ParseAccessToken),
+			apphttp.RateLimit(h.rateLimiter, "auth_change_password", 5, time.Minute, h.logger),
+		).Post("/change-password", h.ChangePassword)
 	})
 }
 
@@ -134,6 +142,52 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	apphttp.WriteJSON(w, http.StatusOK, MeResponse{User: profile})
 }
 
+// UpdateMe maneja PATCH /api/v1/auth/me actualizando nombre_completo y telefono del usuario autenticado.
+func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
+	authUser, ok := apphttp.AuthUserFromContext(r.Context())
+	if !ok {
+		apphttp.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Autenticación requerida")
+		return
+	}
+
+	var req UpdateProfileRequest
+	if err := apphttp.DecodeJSON(w, r, &req); err != nil {
+		apphttp.WriteError(w, http.StatusBadRequest, "INVALID_JSON", err.Error())
+		return
+	}
+
+	profile, err := h.service.UpdateProfile(r.Context(), authUser.UserID, req)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	apphttp.WriteJSON(w, http.StatusOK, MeResponse{User: profile})
+}
+
+// ChangePassword maneja POST /api/v1/auth/change-password verificando la clave actual con Argon2id y revocando sesiones.
+func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	authUser, ok := apphttp.AuthUserFromContext(r.Context())
+	if !ok {
+		apphttp.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Autenticación requerida")
+		return
+	}
+
+	var req ChangePasswordRequest
+	if err := apphttp.DecodeJSON(w, r, &req); err != nil {
+		apphttp.WriteError(w, http.StatusBadRequest, "INVALID_JSON", err.Error())
+		return
+	}
+
+	res, err := h.service.ChangePassword(r.Context(), authUser.UserID, req)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	apphttp.WriteJSON(w, http.StatusOK, res)
+}
+
 func (h *Handler) handleError(w http.ResponseWriter, err error) {
 	var validationErr *ValidationError
 	if errors.As(err, &validationErr) {
@@ -146,6 +200,8 @@ func (h *Handler) handleError(w http.ResponseWriter, err error) {
 		apphttp.WriteError(w, http.StatusConflict, "EMAIL_ALREADY_EXISTS", "Ya existe una cuenta registrada con este correo")
 	case errors.Is(err, ErrInvalidCredentials):
 		apphttp.WriteError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "Correo o contraseña incorrectos")
+	case errors.Is(err, ErrInvalidCurrentPassword):
+		apphttp.WriteError(w, http.StatusBadRequest, "INVALID_CURRENT_PASSWORD", "La contraseña actual es incorrecta")
 	case errors.Is(err, ErrInvalidToken):
 		apphttp.WriteError(w, http.StatusUnauthorized, "INVALID_TOKEN", "Token inválido o expirado")
 	case errors.Is(err, ErrUserNotFound):

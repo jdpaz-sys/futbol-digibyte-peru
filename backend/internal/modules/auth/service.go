@@ -9,11 +9,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/mail"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -27,6 +29,7 @@ const (
 	jwtIssuer            = "futbol-digibyte-peru"
 	jwtTokenTypeAccess   = "access"
 	refreshKeyPrefix     = "auth:refresh:"
+	userSessionsPrefix   = "auth:user_sessions:"
 	minPasswordLength    = 8
 	maxPasswordLength    = 128
 	argonMemoryKiB       = 47104 // 46 MiB (OWASP Argon2id)
@@ -54,9 +57,11 @@ type SessionStore interface {
 	SaveRefreshToken(ctx context.Context, tokenHash string, userID uuid.UUID, ttl time.Duration) error
 	ConsumeRefreshToken(ctx context.Context, tokenHash string) (uuid.UUID, error)
 	DeleteRefreshToken(ctx context.Context, tokenHash string) error
+	RevokeAllUserRefreshTokens(ctx context.Context, userID uuid.UUID) error
 }
 
-// ValkeySessionStore almacena sesiones de refresh en Valkey con TTL automático.
+// ValkeySessionStore almacena sesiones de refresh en Valkey con TTL automático
+// y un índice secundario por usuario para revocación masiva (ej. cambio de contraseña).
 type ValkeySessionStore struct {
 	client *redis.Client
 }
@@ -68,7 +73,13 @@ func NewValkeySessionStore(client *redis.Client) *ValkeySessionStore {
 
 func (s *ValkeySessionStore) SaveRefreshToken(ctx context.Context, tokenHash string, userID uuid.UUID, ttl time.Duration) error {
 	key := refreshKeyPrefix + tokenHash
-	if err := s.client.Set(ctx, key, userID.String(), ttl).Err(); err != nil {
+	userSetKey := userSessionsPrefix + userID.String()
+
+	pipe := s.client.Pipeline()
+	pipe.Set(ctx, key, userID.String(), ttl)
+	pipe.SAdd(ctx, userSetKey, tokenHash)
+	pipe.Expire(ctx, userSetKey, ttl)
+	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("error guardando refresh token en Valkey: %w", err)
 	}
 	return nil
@@ -89,13 +100,44 @@ func (s *ValkeySessionStore) ConsumeRefreshToken(ctx context.Context, tokenHash 
 	if err != nil {
 		return uuid.Nil, ErrInvalidToken
 	}
+
+	_ = s.client.SRem(ctx, userSessionsPrefix+userID.String(), tokenHash).Err()
 	return userID, nil
 }
 
 func (s *ValkeySessionStore) DeleteRefreshToken(ctx context.Context, tokenHash string) error {
 	key := refreshKeyPrefix + tokenHash
-	if err := s.client.Del(ctx, key).Err(); err != nil {
+	rawUserID, err := s.client.GetDel(ctx, key).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil
+		}
 		return fmt.Errorf("error revocando refresh token en Valkey: %w", err)
+	}
+	if strings.TrimSpace(rawUserID) != "" {
+		_ = s.client.SRem(ctx, userSessionsPrefix+strings.TrimSpace(rawUserID), tokenHash).Err()
+	}
+	return nil
+}
+
+// RevokeAllUserRefreshTokens invalida todos los refresh tokens activos de un usuario en Valkey.
+func (s *ValkeySessionStore) RevokeAllUserRefreshTokens(ctx context.Context, userID uuid.UUID) error {
+	userSetKey := userSessionsPrefix + userID.String()
+	hashes, err := s.client.SMembers(ctx, userSetKey).Result()
+	if err != nil {
+		return fmt.Errorf("error listando sesiones activas en Valkey: %w", err)
+	}
+
+	keys := make([]string, 0, len(hashes)+1)
+	for _, h := range hashes {
+		if strings.TrimSpace(h) != "" {
+			keys = append(keys, refreshKeyPrefix+h)
+		}
+	}
+	keys = append(keys, userSetKey)
+
+	if err := s.client.Del(ctx, keys...).Err(); err != nil {
+		return fmt.Errorf("error revocando sesiones activas en Valkey: %w", err)
 	}
 	return nil
 }
@@ -115,6 +157,7 @@ type Service struct {
 	jwtSecret  []byte
 	accessTTL  time.Duration
 	refreshTTL time.Duration
+	logger     *slog.Logger
 	now        func() time.Time
 }
 
@@ -126,8 +169,17 @@ func NewService(repo Repository, sessions SessionStore, jwtSecret string, access
 		jwtSecret:  []byte(jwtSecret),
 		accessTTL:  accessTTL,
 		refreshTTL: refreshTTL,
+		logger:     slog.Default(),
 		now:        time.Now,
 	}
+}
+
+// WithLogger configura un logger estructurado para avisos operativos del módulo auth.
+func (s *Service) WithLogger(logger *slog.Logger) *Service {
+	if logger != nil {
+		s.logger = logger
+	}
+	return s
 }
 
 // Register registra un nuevo JUGADOR con correo normalizado, password Argon2id y teléfono WhatsApp.
@@ -273,6 +325,142 @@ func (s *Service) Me(ctx context.Context, userID uuid.UUID) (UserProfile, error)
 	}
 
 	return toUserProfile(user, complejoID), nil
+}
+
+// UpdateProfile actualiza nombre_completo y/o telefono del usuario autenticado con validación estricta.
+func (s *Service) UpdateProfile(ctx context.Context, userID uuid.UUID, req UpdateProfileRequest) (UserProfile, error) {
+	if req.NombreCompleto == nil && req.Telefono == nil {
+		return UserProfile{}, &ValidationError{
+			Message: "Debe enviar al menos un campo para actualizar el perfil",
+			Fields:  map[string]string{"body": "Envía nombre_completo y/o telefono"},
+		}
+	}
+
+	user, err := s.repo.FindByID(ctx, userID)
+	if err != nil {
+		return UserProfile{}, err
+	}
+	if !user.Activo {
+		return UserProfile{}, ErrAccountInactive
+	}
+
+	nombre := user.NombreCompleto
+	telefono := user.Telefono
+	fields := make(map[string]string)
+
+	if req.NombreCompleto != nil {
+		trimmed := strings.TrimSpace(*req.NombreCompleto)
+		if n := utf8.RuneCountInString(trimmed); n < 2 || n > 150 {
+			fields["nombre_completo"] = "El nombre completo debe tener entre 2 y 150 caracteres"
+		} else {
+			nombre = trimmed
+		}
+	}
+
+	if req.Telefono != nil {
+		trimmed := strings.TrimSpace(*req.Telefono)
+		if trimmed == "" {
+			if user.Rol == apphttp.RoleSuperAdmin {
+				telefono = nil
+			} else {
+				fields["telefono"] = "El número de celular WhatsApp es obligatorio"
+			}
+		} else if !ValidatePhone(trimmed) {
+			fields["telefono"] = "Ingresa un número de celular WhatsApp válido (7 a 20 caracteres)"
+		} else {
+			t := trimmed
+			telefono = &t
+		}
+	}
+
+	if len(fields) > 0 {
+		return UserProfile{}, &ValidationError{
+			Message: "Revisa los datos de perfil",
+			Fields:  fields,
+		}
+	}
+
+	updated, err := s.repo.UpdateProfile(ctx, userID, nombre, telefono)
+	if err != nil {
+		return UserProfile{}, err
+	}
+
+	complejoID, err := s.resolveComplejoID(ctx, updated)
+	if err != nil {
+		return UserProfile{}, err
+	}
+
+	return toUserProfile(updated, complejoID), nil
+}
+
+// ChangePassword verifica la contraseña actual con Argon2id, valida la nueva política de contraseña,
+// actualiza password_hash en PostgreSQL y revoca todos los refresh tokens activos en Valkey.
+// Nota: los access tokens JWT emitidos previamente son stateless de corta duración (JWT_ACCESS_TTL)
+// y expirarán naturalmente; ningún dispositivo podrá refrescar sesión tras el cambio.
+func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, req ChangePasswordRequest) (ChangePasswordResponse, error) {
+	fields := make(map[string]string)
+	if req.PasswordActual == "" {
+		fields["password_actual"] = "La contraseña actual es obligatoria"
+	}
+	if errMsg := ValidatePassword(req.PasswordNueva); errMsg != "" {
+		fields["password_nueva"] = errMsg
+	} else if req.PasswordActual != "" && req.PasswordNueva == req.PasswordActual {
+		fields["password_nueva"] = "La nueva contraseña debe ser diferente a la contraseña actual"
+	}
+	if len(fields) > 0 {
+		return ChangePasswordResponse{}, &ValidationError{
+			Message: "Revisa los datos para cambiar tu contraseña",
+			Fields:  fields,
+		}
+	}
+
+	user, err := s.repo.FindByID(ctx, userID)
+	if err != nil {
+		return ChangePasswordResponse{}, err
+	}
+	if !user.Activo {
+		return ChangePasswordResponse{}, ErrAccountInactive
+	}
+
+	valid, err := VerifyPassword(req.PasswordActual, user.PasswordHash)
+	if err != nil || !valid {
+		return ChangePasswordResponse{}, ErrInvalidCurrentPassword
+	}
+
+	newHash, err := HashPassword(req.PasswordNueva)
+	if err != nil {
+		return ChangePasswordResponse{}, fmt.Errorf("error generando hash Argon2id: %w", err)
+	}
+
+	if err := s.repo.UpdatePasswordHash(ctx, userID, newHash); err != nil {
+		return ChangePasswordResponse{}, err
+	}
+
+	revoked := false
+	if s.sessions != nil {
+		revokeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		if revokeErr := s.sessions.RevokeAllUserRefreshTokens(revokeCtx, userID); revokeErr != nil {
+			if s.logger != nil {
+				s.logger.Warn("auth_change_password_revoke_sessions_error",
+					slog.String("user_id", userID.String()),
+					slog.String("error", revokeErr.Error()),
+				)
+			}
+		} else {
+			revoked = true
+		}
+	}
+
+	msg := "Contraseña actualizada correctamente. Se revocaron las sesiones activas."
+	if !revoked {
+		msg = "Contraseña actualizada correctamente."
+	}
+
+	return ChangePasswordResponse{
+		Message:           msg,
+		SesionesRevocadas: revoked,
+	}, nil
 }
 
 // GenerateAccessToken firma un JWT HS256 de corta duración con {UserID, Rol, ComplejoID}.

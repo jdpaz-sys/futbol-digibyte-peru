@@ -20,6 +20,8 @@ type Repository interface {
 	FindByEmail(ctx context.Context, normalizedEmail string) (User, error)
 	FindByID(ctx context.Context, id uuid.UUID) (User, error)
 	UpdateLastLogin(ctx context.Context, id uuid.UUID) (time.Time, error)
+	UpdateProfile(ctx context.Context, id uuid.UUID, nombreCompleto string, telefono *string) (User, error)
+	UpdatePasswordHash(ctx context.Context, id uuid.UUID, passwordHash string) error
 	FindPrimaryComplejoIDByOwner(ctx context.Context, duenoID uuid.UUID) (*uuid.UUID, error)
 }
 
@@ -147,6 +149,59 @@ func (r *PostgresRepository) UpdateLastLogin(ctx context.Context, id uuid.UUID) 
 		return time.Time{}, fmt.Errorf("error actualizando ultimo_login_at: %w", err)
 	}
 	return lastLogin, nil
+}
+
+// UpdateProfile actualiza nombre_completo y telefono del usuario autenticado.
+func (r *PostgresRepository) UpdateProfile(ctx context.Context, id uuid.UUID, nombreCompleto string, telefono *string) (User, error) {
+	const query = `
+		UPDATE usuarios
+		SET nombre_completo = $2,
+		    telefono = $3
+		WHERE id = $1
+		RETURNING id, rol, email, password_hash, nombre_completo, telefono, activo,
+		          email_verificado_at, ultimo_login_at, created_at, updated_at
+	`
+
+	var u User
+	err := r.pool.QueryRow(ctx, query, id, nombreCompleto, telefono).Scan(
+		&u.ID,
+		&u.Rol,
+		&u.Email,
+		&u.PasswordHash,
+		&u.NombreCompleto,
+		&u.Telefono,
+		&u.Activo,
+		&u.EmailVerificadoAt,
+		&u.UltimoLoginAt,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, ErrUserNotFound
+		}
+		return User{}, fmt.Errorf("error actualizando perfil de usuario: %w", err)
+	}
+	return u, nil
+}
+
+// UpdatePasswordHash actualiza el hash Argon2id de la contraseña del usuario autenticado.
+func (r *PostgresRepository) UpdatePasswordHash(ctx context.Context, id uuid.UUID, passwordHash string) error {
+	const query = `
+		UPDATE usuarios
+		SET password_hash = $2
+		WHERE id = $1
+		RETURNING id
+	`
+
+	var updatedID uuid.UUID
+	if err := r.pool.QueryRow(ctx, query, id, passwordHash).Scan(&updatedID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("error actualizando contraseña de usuario: %w", err)
+	}
+	return nil
 }
 
 // FindPrimaryComplejoIDByOwner obtiene el primer complejo asociado a un DUENO, o nil si aún no tiene uno.

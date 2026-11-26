@@ -74,23 +74,10 @@ func run() error {
 	rateLimiter := apphttp.NewValkeyRateLimiter(valkeyClient)
 	healthHandler := apphttp.NewHealthHandler(pgPool, valkeyClient, logger)
 
-	authRepo := auth.NewRepository(pgPool)
-	authSessions := auth.NewValkeySessionStore(valkeyClient)
-	authService := auth.NewService(authRepo, authSessions, cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
-	authHandler := auth.NewHandler(authService, rateLimiter, logger)
-
-	suscripcionesRepo := suscripciones.NewRepository(pgPool)
-	metricasCache := suscripciones.NewValkeyMetricsCache(valkeyClient)
-	suscripcionesService := suscripciones.NewService(suscripcionesRepo, metricasCache)
-	suscripcionesHandler := suscripciones.NewHandler(suscripcionesService, logger)
-
-	credentialsCipher, err := db.NewCredentialsCipher(cfg.CredentialsEncryptionKey)
+	fileStorage, err := db.NewLocalFileStorage(cfg.UploadDir)
 	if err != nil {
 		return err
 	}
-	complejosRepo := complejos.NewRepository(pgPool)
-	complejosService := complejos.NewService(complejosRepo, credentialsCipher)
-	complejosHandler := complejos.NewHandler(complejosService, logger)
 
 	geoRepo := geo.NewRepository(pgPool)
 	geoCache := geo.NewValkeyCache(valkeyClient)
@@ -101,14 +88,43 @@ func run() error {
 	})
 	geoHandler := geo.NewHandler(geoService, rateLimiter, logger)
 
-	fileStorage, err := db.NewLocalFileStorage(cfg.UploadDir)
+	authRepo := auth.NewRepository(pgPool)
+	authSessions := auth.NewValkeySessionStore(valkeyClient)
+	authService := auth.NewService(authRepo, authSessions, cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL).
+		WithLogger(logger)
+	authHandler := auth.NewHandler(authService, rateLimiter, logger)
+
+	suscripcionesRepo := suscripciones.NewRepository(pgPool)
+	metricasCache := suscripciones.NewValkeyMetricsCache(valkeyClient)
+	suscripcionesService := suscripciones.NewService(suscripcionesRepo, metricasCache).
+		WithPublicCacheInvalidator(geoCache, logger)
+	suscripcionesHandler := suscripciones.NewHandler(suscripcionesService, logger)
+
+	credentialsCipher, err := db.NewCredentialsCipher(cfg.CredentialsEncryptionKey)
 	if err != nil {
 		return err
 	}
+	complejosRepo := complejos.NewRepository(pgPool)
+	complejosService := complejos.NewService(complejosRepo, credentialsCipher).
+		WithStorage(fileStorage).
+		WithPublicCacheInvalidator(geoCache).
+		WithLogger(logger)
+	complejosHandler := complejos.NewHandler(complejosService, logger)
+
 	reservasRepo := reservas.NewRepository(pgPool)
-	reservasService := reservas.NewService(reservasRepo, fileStorage, logger)
+	pushDispatcher := reservas.NewWebPushDispatcher(reservas.WebPushConfig{
+		Enabled:        cfg.PushEnabled,
+		VAPIDPublicKey: cfg.VAPIDPublicKey,
+		VAPIDPrivate:   cfg.VAPIDPrivateKey,
+		VAPIDSubject:   cfg.VAPIDSubject,
+	}, reservasRepo, logger)
+	reservasService := reservas.NewService(reservasRepo, fileStorage, logger).
+		WithPushDispatcher(pushDispatcher)
 	reservasHandler := reservas.NewHandler(reservasService, rateLimiter, logger)
-	expirationWorker := reservas.NewExpirationWorker(reservasRepo, reservas.DefaultWorkerInterval, logger)
+	expirationWorker := reservas.NewExpirationWorker(reservasRepo, reservas.DefaultWorkerInterval, logger).
+		WithMaintenance(reservasRepo, reservas.DefaultMaintenanceInterval).
+		WithPublicCacheInvalidator(geoCache).
+		WithPushDispatcher(pushDispatcher)
 
 	reportesRepo := reportes.NewRepository(pgPool)
 	reportesService := reportes.NewService(reportesRepo)
@@ -125,6 +141,7 @@ func run() error {
 		},
 		MountPublic: func(public chi.Router) {
 			geoHandler.RegisterPublicRoutes(public)
+			complejosHandler.RegisterPublicRoutes(public)
 			reservasHandler.RegisterPublicRoutes(public)
 		},
 		MountAdmin: func(admin chi.Router) {
@@ -166,6 +183,7 @@ func run() error {
 		logger.Info("api_server_started",
 			slog.String("env", cfg.AppEnv),
 			slog.String("addr", server.Addr),
+			slog.Bool("push_enabled", pushDispatcher.Enabled()),
 		)
 		if serveErr := server.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			errCh <- serveErr
@@ -195,6 +213,8 @@ func run() error {
 	case <-shutdownCtx.Done():
 		logger.Warn("reservas_expiration_worker_shutdown_timeout")
 	}
+
+	pushDispatcher.Wait(shutdownCtx)
 
 	if serveErr != nil {
 		return serveErr

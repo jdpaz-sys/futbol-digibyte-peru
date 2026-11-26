@@ -139,6 +139,17 @@ func (s *miniValkeyServer) handleConn(conn net.Conn) {
 			s.entries[args[1]] = miniValkeyEntry{val: args[2], ttlMs: ttlMs}
 			s.mu.Unlock()
 			_, _ = io.WriteString(conn, "+OK\r\n")
+		case "DEL":
+			var removed int
+			s.mu.Lock()
+			for _, key := range args[1:] {
+				if _, exists := s.entries[key]; exists {
+					delete(s.entries, key)
+					removed++
+				}
+			}
+			s.mu.Unlock()
+			_, _ = fmt.Fprintf(conn, ":%d\r\n", removed)
 		default:
 			_, _ = io.WriteString(conn, "+OK\r\n")
 		}
@@ -717,6 +728,23 @@ func TestPublicComplejoBySlug_RN02_ActiveSuspendedAndExpiredByDate(t *testing.T)
 	slugEntry, ok := valkeySrv.getEntry("geo:public:complejo:cancha-vigente-huacho")
 	if !ok || slugEntry.ttlMs != 60000 {
 		t.Fatalf("caché de slug esperada con TTL 60000ms, obtenido ok=%v entry=%+v", ok, slugEntry)
+	}
+
+	// Invalidación inmediata de caché por slug -> la siguiente consulta debe recargar desde repositorio
+	if err := geo.NewValkeyCache(redisClient).InvalidatePublicComplejo(context.Background(), "cancha-vigente-huacho"); err != nil {
+		t.Fatalf("InvalidatePublicComplejo falló: %v", err)
+	}
+	if _, stillCached := valkeySrv.getEntry("geo:public:complejo:cancha-vigente-huacho"); stillCached {
+		t.Fatal("la clave de caché pública debía eliminarse inmediatamente tras InvalidatePublicComplejo")
+	}
+	store.fotos = []geo.PublicFoto{{ID: uuid.New(), URL: "/api/v1/public/media/public/complejos/1/fotos/nueva.jpg", EsPortada: true}}
+	recAfterInvalidate := httptest.NewRecorder()
+	router.ServeHTTP(recAfterInvalidate, httptest.NewRequest(http.MethodGet, "/api/v1/public/complejos/cancha-vigente-huacho", nil))
+	if recAfterInvalidate.Code != http.StatusOK || store.slugHits != hitsBefore+1 {
+		t.Fatalf("tras invalidación esperaba recarga desde repositorio; status=%d slugHits=%d esperado=%d", recAfterInvalidate.Code, store.slugHits, hitsBefore+1)
+	}
+	if !strings.Contains(recAfterInvalidate.Body.String(), "nueva.jpg") {
+		t.Fatalf("la ficha recargada debía incluir la nueva foto: %s", recAfterInvalidate.Body.String())
 	}
 
 	// 3. Bloqueo RN-02 por estado SUSPENDIDA y por fecha vencida -> 200 con acepta_reservas=false y motivo claro

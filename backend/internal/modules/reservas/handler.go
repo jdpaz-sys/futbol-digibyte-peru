@@ -46,10 +46,11 @@ func NewHandler(service *Service, rateLimiter apphttp.RateLimiter, logger *slog.
 	}
 }
 
-// RegisterPublicRoutes monta disponibilidad y cotizador bajo /api/v1/public.
+// RegisterPublicRoutes monta disponibilidad, cotizador y configuración pública Web Push bajo /api/v1/public.
 func (h *Handler) RegisterPublicRoutes(public chi.Router) {
 	public.Get("/complejos/{slug}/disponibilidad", h.handleGetDisponibilidad)
 	public.Post("/complejos/{slug}/cotizar", h.handleCotizar)
+	public.Get("/push-config", h.handleGetPushConfig)
 }
 
 // RegisterJugadorRoutes monta las rutas protegidas con RequireAuth + RequireRole("JUGADOR") bajo /api/v1/jugador.
@@ -127,6 +128,10 @@ func (h *Handler) handleCotizar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	apphttp.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) handleGetPushConfig(w http.ResponseWriter, _ *http.Request) {
+	apphttp.WriteJSON(w, http.StatusOK, h.service.GetPushConfig())
 }
 
 func (h *Handler) handleCreateReserva(w http.ResponseWriter, r *http.Request) {

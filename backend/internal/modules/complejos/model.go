@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -49,9 +50,15 @@ const (
 var (
 	ErrComplejoNotFound       = errors.New("complejo deportivo no encontrado")
 	ErrCanchaNotFound         = errors.New("cancha no encontrada")
+	ErrFotoNotFound           = errors.New("foto del complejo no encontrada")
 	ErrTarifaNotFound         = errors.New("tarifa por franja no encontrada")
 	ErrCuponNotFound          = errors.New("cupón no encontrado")
 	ErrMetodoPagoNotFound     = errors.New("método de pago no encontrado")
+	ErrMetodoPagoNoQR         = errors.New("solo los métodos de pago YAPE o PLIN admiten código QR")
+	ErrFileTooLarge           = errors.New("la imagen excede el límite máximo de 5 MB")
+	ErrInvalidFileType        = errors.New("el archivo debe ser una imagen válida en formato JPG, PNG o WEBP")
+	ErrMediaNotFound          = errors.New("archivo multimedia no encontrado")
+	ErrMediaForbidden         = errors.New("acceso denegado a esta ruta multimedia")
 	ErrTarifaOverlap          = errors.New("la franja horaria se solapa con otra tarifa activa")
 	ErrCuponCodeAlreadyExists = errors.New("ya existe un cupón con ese código en este complejo")
 	ErrConflict               = errors.New("conflicto de unicidad en el recurso")
@@ -445,4 +452,40 @@ type SaveMetodoPagoParams struct {
 	UpdateCredenciales   bool
 	Instrucciones        *string
 	Activo               bool
+}
+
+// ComplejoFoto representa una fotografía de la galería del complejo en complejo_fotos.
+type ComplejoFoto struct {
+	ID          uuid.UUID `json:"id"`
+	ComplejoID  uuid.UUID `json:"complejo_id"`
+	URL         string    `json:"url"`
+	StorageKey  *string   `json:"storage_key,omitempty"`
+	Descripcion *string   `json:"descripcion"`
+	Orden       int16     `json:"orden"`
+	EsPortada   bool      `json:"es_portada"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// UploadComplejoFotoInput encapsula los datos multipart validados para subir una foto a la galería.
+type UploadComplejoFotoInput struct {
+	ComplejoID  uuid.UUID
+	FileData    []byte
+	Descripcion *string
+	Orden       int
+	EsPortada   bool
+}
+
+// UpdateComplejoFotoRequest define los campos editables en PATCH /api/v1/dueno/fotos/{fotoID}.
+type UpdateComplejoFotoRequest struct {
+	Descripcion *string `json:"descripcion"`
+	Orden       *int    `json:"orden"`
+	EsPortada   *bool   `json:"es_portada"`
+}
+
+// PublicMediaStream contiene el flujo binario seguro y metadatos para servir media bajo public/.
+type PublicMediaStream struct {
+	Reader      io.ReadCloser
+	Prefix      []byte
+	ContentType string
+	IsInline    bool
 }

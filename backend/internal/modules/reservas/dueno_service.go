@@ -121,7 +121,22 @@ func (s *Service) AprobarComprobante(ctx context.Context, complejoID, reservaID,
 	if err != nil {
 		return DuenoReservaDetail{}, fmt.Errorf("error generando código QR: %w", err)
 	}
-	return s.repo.AprobarComprobanteTx(ctx, complejoID, reservaID, duenoUserID, codigoQR)
+	detail, err := s.repo.AprobarComprobanteTx(ctx, complejoID, reservaID, duenoUserID, codigoQR)
+	if err != nil {
+		return DuenoReservaDetail{}, err
+	}
+	if detail.JugadorID != nil {
+		cID, rID := detail.ComplejoID, detail.ID
+		s.dispatchPushAsync(ctx, PushMessage{
+			UsuarioID:  *detail.JugadorID,
+			ComplejoID: &cID,
+			ReservaID:  &rID,
+			Tipo:       NotifReservaConfirmada,
+			Titulo:     "Reserva confirmada",
+			Mensaje:    fmt.Sprintf("Tu pago fue aprobado y tu código QR está listo para %s.", detail.Cancha.Nombre),
+		})
+	}
+	return detail, nil
 }
 
 // RechazarComprobante exige un motivo obligatorio, marca RECHAZADA, revierte cupón y notifica al jugador.
@@ -135,7 +150,22 @@ func (s *Service) RechazarComprobante(ctx context.Context, complejoID, reservaID
 			},
 		}
 	}
-	return s.repo.RechazarComprobanteTx(ctx, complejoID, reservaID, duenoUserID, motivo)
+	detail, err := s.repo.RechazarComprobanteTx(ctx, complejoID, reservaID, duenoUserID, motivo)
+	if err != nil {
+		return DuenoReservaDetail{}, err
+	}
+	if detail.JugadorID != nil {
+		cID, rID := detail.ComplejoID, detail.ID
+		s.dispatchPushAsync(ctx, PushMessage{
+			UsuarioID:  *detail.JugadorID,
+			ComplejoID: &cID,
+			ReservaID:  &rID,
+			Tipo:       NotifComprobanteRechazado,
+			Titulo:     "Comprobante rechazado",
+			Mensaje:    fmt.Sprintf("Tu comprobante fue rechazado: %s", motivo),
+		})
+	}
+	return detail, nil
 }
 
 // CreateExterna valida y registra una reserva externa confirmada con bloqueo GIST y código QR (RF-14).
@@ -310,7 +340,22 @@ func (s *Service) MarkNoShow(ctx context.Context, complejoID, reservaID, duenoUs
 			Fields:  map[string]string{"motivo": "motivo no puede exceder 500 caracteres"},
 		}
 	}
-	return s.repo.MarkNoShowTx(ctx, complejoID, reservaID, duenoUserID, motivo)
+	detail, err := s.repo.MarkNoShowTx(ctx, complejoID, reservaID, duenoUserID, motivo)
+	if err != nil {
+		return DuenoReservaDetail{}, err
+	}
+	if detail.JugadorID != nil {
+		cID, rID := detail.ComplejoID, detail.ID
+		s.dispatchPushAsync(ctx, PushMessage{
+			UsuarioID:  *detail.JugadorID,
+			ComplejoID: &cID,
+			ReservaID:  &rID,
+			Tipo:       NotifReservaNoShow,
+			Titulo:     "Inasistencia registrada (No-Show)",
+			Mensaje:    fmt.Sprintf("Se registró inasistencia para tu reserva en %s.", detail.Cancha.Nombre),
+		})
+	}
+	return detail, nil
 }
 
 // CancelReservaJugador cancela una reserva del jugador respetando ventana RN-13 y reembolso RN-14.
@@ -336,7 +381,22 @@ func (s *Service) CancelReservaDueno(ctx context.Context, complejoID, reservaID,
 			},
 		}
 	}
-	return s.repo.CancelReservaDuenoTx(ctx, complejoID, reservaID, duenoUserID, motivo)
+	detail, err := s.repo.CancelReservaDuenoTx(ctx, complejoID, reservaID, duenoUserID, motivo)
+	if err != nil {
+		return DuenoReservaDetail{}, err
+	}
+	if detail.JugadorID != nil {
+		cID, rID := detail.ComplejoID, detail.ID
+		s.dispatchPushAsync(ctx, PushMessage{
+			UsuarioID:  *detail.JugadorID,
+			ComplejoID: &cID,
+			ReservaID:  &rID,
+			Tipo:       NotifReservaCancelada,
+			Titulo:     "Reserva cancelada por el complejo",
+			Mensaje:    fmt.Sprintf("Tu reserva fue cancelada por el complejo. Motivo: %s", motivo),
+		})
+	}
+	return detail, nil
 }
 
 // MarkReembolsoResuelto registra que el complejo resolvió directamente un reembolso pendiente (RN-14).
@@ -348,7 +408,22 @@ func (s *Service) MarkReembolsoResuelto(ctx context.Context, complejoID, reserva
 			Fields:  map[string]string{"motivo": "motivo no puede exceder 500 caracteres"},
 		}
 	}
-	return s.repo.MarkReembolsoResueltoTx(ctx, complejoID, reservaID, duenoUserID, motivo)
+	detail, err := s.repo.MarkReembolsoResueltoTx(ctx, complejoID, reservaID, duenoUserID, motivo)
+	if err != nil {
+		return DuenoReservaDetail{}, err
+	}
+	if detail.JugadorID != nil {
+		cID, rID := detail.ComplejoID, detail.ID
+		s.dispatchPushAsync(ctx, PushMessage{
+			UsuarioID:  *detail.JugadorID,
+			ComplejoID: &cID,
+			ReservaID:  &rID,
+			Tipo:       NotifReembolsoResuelto,
+			Titulo:     "Reembolso resuelto",
+			Mensaje:    "El complejo registró como resuelto el reembolso directo de tu reserva.",
+		})
+	}
+	return detail, nil
 }
 
 // ReprogramarJugador reprograma in-place una reserva confirmada del jugador dentro de la ventana RN-13.
@@ -374,7 +449,22 @@ func (s *Service) ReprogramarDueno(ctx context.Context, complejoID, reservaID, d
 	in.ComplejoID = &complejoID
 	in.ActorID = duenoUserID
 	in.IsDueno = true
-	return s.repo.ReprogramarDuenoTx(ctx, in)
+	detail, err := s.repo.ReprogramarDuenoTx(ctx, in)
+	if err != nil {
+		return DuenoReservaDetail{}, err
+	}
+	if detail.JugadorID != nil {
+		cID, rID := detail.ComplejoID, detail.ID
+		s.dispatchPushAsync(ctx, PushMessage{
+			UsuarioID:  *detail.JugadorID,
+			ComplejoID: &cID,
+			ReservaID:  &rID,
+			Tipo:       NotifReservaReprogramada,
+			Titulo:     "Reserva reprogramada",
+			Mensaje:    fmt.Sprintf("Tu reserva en %s fue reprogramada al %s.", detail.Cancha.Nombre, detail.Inicio.Format("02/01 15:04")),
+		})
+	}
+	return detail, nil
 }
 
 func parseReprogramRequest(req ReprogramarReservaRequest) (ReprogramarTxInput, error) {

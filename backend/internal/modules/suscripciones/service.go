@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"regexp"
 	"strings"
@@ -81,18 +82,35 @@ func (c *ValkeyMetricsCache) Invalidate(ctx context.Context) error {
 	return c.client.Del(ctx, metricasCacheKey).Err()
 }
 
+// PublicCacheInvalidator invalida de forma desacoplada la caché pública por slug en Valkey.
+type PublicCacheInvalidator interface {
+	InvalidatePublicComplejo(ctx context.Context, slug string) error
+}
+
 // Service encapsula la lógica de negocio del módulo B2B suscripciones (Super Admin).
 type Service struct {
-	repo  Repository
-	cache MetricsCache
+	repo        Repository
+	cache       MetricsCache
+	publicCache PublicCacheInvalidator
+	logger      *slog.Logger
 }
 
 // NewService crea una instancia del servicio de suscripciones.
 func NewService(repo Repository, cache MetricsCache) *Service {
 	return &Service{
-		repo:  repo,
-		cache: cache,
+		repo:   repo,
+		cache:  cache,
+		logger: slog.Default(),
 	}
+}
+
+// WithPublicCacheInvalidator inyecta el invalidador de caché pública por slug (Bloque B).
+func (s *Service) WithPublicCacheInvalidator(inv PublicCacheInvalidator, logger *slog.Logger) *Service {
+	s.publicCache = inv
+	if logger != nil {
+		s.logger = logger
+	}
+	return s
 }
 
 // ListPlanes devuelve el catálogo de planes SaaS filtrable por activo.
@@ -477,6 +495,7 @@ func (s *Service) RenovarSuscripcion(ctx context.Context, adminID, complejoID uu
 	}
 
 	s.invalidateCache(ctx)
+	s.invalidatePublicSlug(ctx, res.Slug)
 	return res, nil
 }
 
@@ -512,6 +531,7 @@ func (s *Service) CambiarEstadoSuscripcion(ctx context.Context, adminID, complej
 	}
 
 	s.invalidateCache(ctx)
+	s.invalidatePublicSlug(ctx, res.Slug)
 	return res, nil
 }
 
@@ -537,7 +557,23 @@ func (s *Service) GetMetricasGlobales(ctx context.Context) (MetricasGlobalesResp
 
 func (s *Service) invalidateCache(ctx context.Context) {
 	if s.cache != nil {
-		_ = s.cache.Invalidate(ctx)
+		if err := s.cache.Invalidate(ctx); err != nil && s.logger != nil {
+			s.logger.Warn("suscripciones_metrics_cache_invalidate_error", slog.String("error", err.Error()))
+		}
+	}
+}
+
+func (s *Service) invalidatePublicSlug(ctx context.Context, slug string) {
+	if s.publicCache == nil || strings.TrimSpace(slug) == "" {
+		return
+	}
+	invCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := s.publicCache.InvalidatePublicComplejo(invCtx, slug); err != nil && s.logger != nil {
+		s.logger.Warn("suscripciones_public_cache_invalidate_error",
+			slog.String("slug", slug),
+			slog.String("error", err.Error()),
+		)
 	}
 }
 

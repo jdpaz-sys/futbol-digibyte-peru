@@ -232,6 +232,31 @@ func (m *memoryRepo) FindPrimaryComplejoIDByOwner(_ context.Context, _ uuid.UUID
 	return nil, nil
 }
 
+func (m *memoryRepo) UpdateProfile(_ context.Context, id uuid.UUID, nombreCompleto string, telefono *string) (User, error) {
+	u, ok := m.usersByID[id]
+	if !ok {
+		return User{}, ErrUserNotFound
+	}
+	u.NombreCompleto = nombreCompleto
+	u.Telefono = telefono
+	u.UpdatedAt = time.Now().UTC()
+	m.usersByID[id] = u
+	m.usersByEmail[u.Email] = u
+	return u, nil
+}
+
+func (m *memoryRepo) UpdatePasswordHash(_ context.Context, id uuid.UUID, passwordHash string) error {
+	u, ok := m.usersByID[id]
+	if !ok {
+		return ErrUserNotFound
+	}
+	u.PasswordHash = passwordHash
+	u.UpdatedAt = time.Now().UTC()
+	m.usersByID[id] = u
+	m.usersByEmail[u.Email] = u
+	return nil
+}
+
 type memorySessionStore struct {
 	tokens map[string]uuid.UUID
 }
@@ -256,6 +281,15 @@ func (s *memorySessionStore) ConsumeRefreshToken(_ context.Context, tokenHash st
 
 func (s *memorySessionStore) DeleteRefreshToken(_ context.Context, tokenHash string) error {
 	delete(s.tokens, tokenHash)
+	return nil
+}
+
+func (s *memorySessionStore) RevokeAllUserRefreshTokens(_ context.Context, userID uuid.UUID) error {
+	for h, uid := range s.tokens {
+		if uid == userID {
+			delete(s.tokens, h)
+		}
+	}
 	return nil
 }
 
@@ -331,5 +365,114 @@ func TestRegisterRejectsRoleEscalationField(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, esperado 400 al enviar campo rol no permitido", rec.Code)
+	}
+}
+
+func TestUpdateProfileAndChangePassword(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryRepo()
+	sessions := newMemorySessionStore()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewService(repo, sessions, "secreto-de-pruebas-unitario-con-mas-de-32-chars", 15*time.Minute, 7*24*time.Hour).WithLogger(logger)
+	handler := NewHandler(svc, nil, logger)
+
+	router := apphttp.NewRouter(apphttp.RouterConfig{
+		Logger:      logger,
+		TokenParser: svc.ParseAccessToken,
+		MountV1:     handler.RegisterRoutes,
+	})
+
+	created, err := svc.Register(ctx, RegisterRequest{
+		Email:          "perfil@digibyte.pe",
+		Password:       "ClaveInicial2026!",
+		NombreCompleto: "Pedro Paredes",
+		Telefono:       "987654321",
+	})
+	if err != nil {
+		t.Fatalf("Register falló: %v", err)
+	}
+
+	login1, err := svc.Login(ctx, LoginRequest{Email: "perfil@digibyte.pe", Password: "ClaveInicial2026!"})
+	if err != nil {
+		t.Fatalf("Login #1 falló: %v", err)
+	}
+	login2, err := svc.Login(ctx, LoginRequest{Email: "perfil@digibyte.pe", Password: "ClaveInicial2026!"})
+	if err != nil {
+		t.Fatalf("Login #2 falló: %v", err)
+	}
+
+	// 1. PATCH /api/v1/auth/me sin token -> 401
+	reqUnauth := httptest.NewRequest(http.MethodPatch, "/api/v1/auth/me", bytes.NewBufferString(`{"nombre_completo":"Nuevo"}`))
+	recUnauth := httptest.NewRecorder()
+	router.ServeHTTP(recUnauth, reqUnauth)
+	if recUnauth.Code != http.StatusUnauthorized {
+		t.Fatalf("PATCH /me sin token esperaba 401, obtuvo %d", recUnauth.Code)
+	}
+
+	// 2. PATCH /api/v1/auth/me con datos válidos -> 200 y perfil actualizado sin password_hash
+	reqPatch := httptest.NewRequest(http.MethodPatch, "/api/v1/auth/me", bytes.NewBufferString(`{"nombre_completo":"Pedro Paredes Soto","telefono":"+51 999 888 777"}`))
+	reqPatch.Header.Set("Authorization", "Bearer "+login1.AccessToken)
+	recPatch := httptest.NewRecorder()
+	router.ServeHTTP(recPatch, reqPatch)
+	if recPatch.Code != http.StatusOK {
+		t.Fatalf("PATCH /me esperaba 200, obtuvo %d: %s", recPatch.Code, recPatch.Body.String())
+	}
+	if !strings.Contains(recPatch.Body.String(), "Pedro Paredes Soto") || !strings.Contains(recPatch.Body.String(), "+51 999 888 777") {
+		t.Fatalf("respuesta PATCH /me inesperada: %s", recPatch.Body.String())
+	}
+	if strings.Contains(recPatch.Body.String(), "argon2id") {
+		t.Fatalf("respuesta PATCH /me no debe exponer password_hash: %s", recPatch.Body.String())
+	}
+
+	// 3. PATCH /api/v1/auth/me vacío para JUGADOR con teléfono en blanco -> 400
+	reqBadPhone := httptest.NewRequest(http.MethodPatch, "/api/v1/auth/me", bytes.NewBufferString(`{"telefono":"   "}`))
+	reqBadPhone.Header.Set("Authorization", "Bearer "+login1.AccessToken)
+	recBadPhone := httptest.NewRecorder()
+	router.ServeHTTP(recBadPhone, reqBadPhone)
+	if recBadPhone.Code != http.StatusBadRequest {
+		t.Fatalf("PATCH /me con teléfono vacío para JUGADOR esperaba 400, obtuvo %d", recBadPhone.Code)
+	}
+
+	// 4. POST /api/v1/auth/change-password con password_actual incorrecta -> 400 INVALID_CURRENT_PASSWORD
+	reqWrongPwd := httptest.NewRequest(http.MethodPost, "/api/v1/auth/change-password", bytes.NewBufferString(`{"password_actual":"Incorrecta2026!","password_nueva":"NuevaClave2026!"}`))
+	reqWrongPwd.Header.Set("Authorization", "Bearer "+login1.AccessToken)
+	recWrongPwd := httptest.NewRecorder()
+	router.ServeHTTP(recWrongPwd, reqWrongPwd)
+	if recWrongPwd.Code != http.StatusBadRequest || !strings.Contains(recWrongPwd.Body.String(), "INVALID_CURRENT_PASSWORD") {
+		t.Fatalf("change-password con clave actual errónea esperaba 400 INVALID_CURRENT_PASSWORD, obtuvo %d: %s", recWrongPwd.Code, recWrongPwd.Body.String())
+	}
+
+	// 5. POST /api/v1/auth/change-password con misma clave -> 400 VALIDATION_ERROR
+	reqSamePwd := httptest.NewRequest(http.MethodPost, "/api/v1/auth/change-password", bytes.NewBufferString(`{"password_actual":"ClaveInicial2026!","password_nueva":"ClaveInicial2026!"}`))
+	reqSamePwd.Header.Set("Authorization", "Bearer "+login1.AccessToken)
+	recSamePwd := httptest.NewRecorder()
+	router.ServeHTTP(recSamePwd, reqSamePwd)
+	if recSamePwd.Code != http.StatusBadRequest {
+		t.Fatalf("change-password con misma contraseña esperaba 400, obtuvo %d", recSamePwd.Code)
+	}
+
+	// 6. POST /api/v1/auth/change-password válido -> 200, revoca todos los refresh tokens activos y acepta login con nueva clave
+	reqChange := httptest.NewRequest(http.MethodPost, "/api/v1/auth/change-password", bytes.NewBufferString(`{"password_actual":"ClaveInicial2026!","password_nueva":"NuevaClaveSegura2026!"}`))
+	reqChange.Header.Set("Authorization", "Bearer "+login1.AccessToken)
+	recChange := httptest.NewRecorder()
+	router.ServeHTTP(recChange, reqChange)
+	if recChange.Code != http.StatusOK || !strings.Contains(recChange.Body.String(), `"sesiones_revocadas":true`) {
+		t.Fatalf("change-password válido esperaba 200 con sesiones_revocadas=true, obtuvo %d: %s", recChange.Code, recChange.Body.String())
+	}
+
+	// Todos los refresh tokens emitidos antes del cambio fueron revocados
+	if _, err := svc.Refresh(ctx, RefreshRequest{RefreshToken: login1.RefreshToken}); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("refresh token #1 debía estar revocado, obtuvo %v", err)
+	}
+	if _, err := svc.Refresh(ctx, RefreshRequest{RefreshToken: login2.RefreshToken}); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("refresh token #2 debía estar revocado, obtuvo %v", err)
+	}
+
+	// Login con clave vieja falla, con clave nueva funciona
+	if _, err := svc.Login(ctx, LoginRequest{Email: created.Email, Password: "ClaveInicial2026!"}); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("login con contraseña anterior debía fallar, obtuvo %v", err)
+	}
+	if _, err := svc.Login(ctx, LoginRequest{Email: created.Email, Password: "NuevaClaveSegura2026!"}); err != nil {
+		t.Fatalf("login con nueva contraseña falló: %v", err)
 	}
 }

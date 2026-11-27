@@ -78,6 +78,13 @@ html.lenis body {
   height: 100lvh;
 }
 
+/* Aísla layout y repintado exclusivamente en el escenario visual del Hero sin afectar sticky ni secciones inferiores */
+.hero-scroll-track > .hero-sticky-stage,
+.hero-touch-track > .hero-sticky-stage,
+.hero-reduced-track > .hero-sticky-stage {
+  contain: layout paint;
+}
+
 .hero-safe-ui-layer {
   height: 100vh;
   height: 100svh;

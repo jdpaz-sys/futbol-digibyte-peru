@@ -31,13 +31,14 @@ export function LandingStage() {
     const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
     if (isCoarsePointer) return;
 
+    /* Calibrado sin doble arrastre (lerp 0.16) para acompañar el damping exponencial 120Hz del Hero */
     const lenis = new Lenis({
       autoRaf: false,
       smoothWheel: true,
       syncTouch: false,
       wheelMultiplier: 1.05,
       touchMultiplier: 1,
-      lerp: 0.11,
+      lerp: 0.16,
     });
     lenisRef.current = lenis;
     lenis.scrollTo(window.scrollY, { immediate: true, force: true });

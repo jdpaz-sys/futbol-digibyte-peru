@@ -6,12 +6,12 @@ import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { SITE_CONFIG } from "@/shared/site-config";
 
-/* Keyframe exacto en Desktop (-g 10 a 24fps -> I-frame pts_time = 2.500000s, fotograma 60) */
+/* Keyframe exacto en Desktop (-g 6 a 24fps -> I-frame cada 0.25s; reposo intro exacto en 2.500000s) */
 const INTRO_END_TIME = 2.5;
+const DESKTOP_DAMPING_LAMBDA = 12;
+const DESKTOP_SEEK_MIN_DELTA_SEC = 0.022;
+const DESKTOP_SEEK_STUCK_TIMEOUT_MS = 180;
 const SLOW_NETWORK_INTRO_TIMEOUT_SEC = 1.8;
-const DESKTOP_SCRUB_LERP = 0.18;
-const DESKTOP_SEEK_MIN_INTERVAL_MS = 34;
-const DESKTOP_SEEK_MIN_DELTA_SEC = 0.025;
 const SCROLL_STATE_KEY = "fdp_landing_scroll_zone_v1";
 
 type ViewportMediaVariant = "mobile" | "desktop";
@@ -136,7 +136,6 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
   const counterDigitsRef = useRef<HTMLSpanElement | null>(null);
 
   const modeRef = useRef<"intro" | "scrub">("intro");
-  const playheadRef = useRef({ progress: 0 });
   const renderedTimeRef = useRef(0);
   const introFinishedRef = useRef(false);
   const videoFatalErrorRef = useRef(false);
@@ -164,14 +163,17 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     const connection = getNetworkConnection();
 
     const evaluateDeviceMode = (resetVideoState: boolean) => {
-      const touchOrMobile = mobileQuery.matches || coarseQuery.matches;
+      const isNarrowViewport = mobileQuery.matches;
+      const touchOrMobile = isNarrowViewport || coarseQuery.matches;
       if (resetVideoState) {
         videoFatalErrorRef.current = false;
         setHasVideoError(false);
         setIsVideoFrameReady(false);
       }
       setIsMobileOrTouch(touchOrMobile);
-      setMediaVariant(touchOrMobile ? "mobile" : "desktop");
+      /* Selección de asset por ancho real (< 768px 608x1080 vertical vs >= 768px 1920x1080 16:9)
+         evitando estirar el video vertical 608px en tablets/laptops táctiles apaisadas */
+      setMediaVariant(isNarrowViewport ? "mobile" : "desktop");
     };
 
     const syncInitialClientEnv = () => {
@@ -202,9 +204,9 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
   const shouldLoadVideo =
     mediaVariant !== null && !saveDataMode && !hasVideoError;
 
-  /* H.264 High: móvil autoplay -v3 (-g 48 -bf 2) y desktop scrubbing -v4 (-g 10 -bf 0, <= 5.5 Mbps) */
+  /* H.264 High: móvil autoplay HQ (608x1080 1:1, -g 48 -bf 2) y desktop smooth (1920x1080 1:1, -g 6 -bf 0) */
   const resolvedVideoSrc = shouldLoadVideo
-    ? isMobileOrTouch || mediaVariant === "mobile"
+    ? mediaVariant === "mobile"
       ? SITE_CONFIG.media.heroMobileMp4
       : SITE_CONFIG.media.heroDesktopMp4
     : undefined;
@@ -690,8 +692,9 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
 
   /* =========================================================================
      RAMA 2 — ESCRITORIO (>= 768px con pointer: fine):
-     Scroll-scrubbing cinematográfico calibrado a 24fps reales (throttle ~34ms,
-     cero re-renders de React en scroll, cero I/O repetido en sessionStorage)
+     Motor de scroll-scrubbing directo sobre ruta estática preload="auto"
+     (-g 6, I-frame cada 0.25s), amortiguación exponencial limpia y seguro
+     anti-bloqueo de seeking (> 180ms).
      ========================================================================= */
   useEffect(() => {
     const trackEl = trackRef.current;
@@ -735,13 +738,17 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
 
     let revealDelayTimer: ReturnType<typeof setTimeout> | undefined;
     let scrollTriggerInstance: ScrollTrigger | null = null;
+    let actsTimeline: gsap.core.Timeline | null = null;
     let isListeningScrollSave = false;
     let hasPrimedInteraction = false;
     let hasNativeVideoAdvanced = false;
     let desktopFrameReadyFlag = false;
     let desktopSettledExactApplied = false;
     let isHeroNearViewport = true;
-    let lastDesktopSeekMs = 0;
+    let rawProgress = 0;
+    let smoothProgress = 0;
+    let lastAppliedActsProgress = -1;
+    let lastSeekIssuedMs = 0;
     let lastRenderedCounterPct = 1;
     let lastPersistedZone: "hero" | "lower" | null = null;
     let lastPersistedLowerBucket = -1;
@@ -805,53 +812,6 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       }
     };
 
-    const snapVideoToRestedFrame = () => {
-      const v = videoRef.current;
-      if (
-        !v ||
-        !canUseVideo ||
-        videoFatalErrorRef.current ||
-        modeRef.current !== "scrub" ||
-        v.readyState < 2 ||
-        !Number.isFinite(v.duration) ||
-        v.duration <= INTRO_END_TIME
-      ) {
-        return;
-      }
-
-      const maxTime = Math.max(INTRO_END_TIME, v.duration - 0.04);
-      const exactDesiredTime = Math.min(
-        maxTime,
-        Math.max(
-          INTRO_END_TIME,
-          INTRO_END_TIME +
-            playheadRef.current.progress * (maxTime - INTRO_END_TIME)
-        )
-      );
-      renderedTimeRef.current = exactDesiredTime;
-
-      const applyExactSeek = () => {
-        if (
-          modeRef.current !== "scrub" ||
-          v.readyState < 2 ||
-          v.seeking ||
-          Math.abs(exactDesiredTime - v.currentTime) <= 0.012
-        ) {
-          desktopSettledExactApplied = true;
-          return;
-        }
-        lastDesktopSeekMs = performance.now();
-        v.currentTime = exactDesiredTime;
-        desktopSettledExactApplied = true;
-      };
-
-      if (v.seeking) {
-        v.addEventListener("seeked", applyExactSeek, { once: true });
-      } else {
-        applyExactSeek();
-      }
-    };
-
     const ctx = gsap.context(() => {
       /* Compuerta ligera de proximidad para desactivar cálculos cuando el Hero queda atrás */
       ScrollTrigger.create({
@@ -873,27 +833,15 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
         force3D: true,
       });
 
+      /* Timeline pausada gobernada directamente por smoothProgress en el ticker */
       const tl = gsap.timeline({
+        paused: true,
         defaults: { ease: "none" },
-        scrollTrigger: {
-          trigger: trackEl,
-          start: "top top",
-          end: "bottom bottom",
-          pin: false,
-          scrub: 0.3,
-          invalidateOnRefresh: true,
-          onScrubComplete: snapVideoToRestedFrame,
-        },
       });
+      actsTimeline = tl;
 
-      scrollTriggerInstance = tl.scrollTrigger ?? null;
-
-      tl.fromTo(
-        playheadRef.current,
-        { progress: 0 },
-        { progress: 1, duration: 1, ease: "none" },
-        0
-      );
+      /* Ancla duración normalizada exacta [0..1] para conservar intactos los tiempos de los 3 actos */
+      tl.to({}, { duration: 1 }, 0);
 
       tl.to(
         act1Ref.current,
@@ -944,6 +892,21 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
         0.69
       );
 
+      scrollTriggerInstance = ScrollTrigger.create({
+        trigger: trackEl,
+        start: "top top",
+        end: "bottom bottom",
+        pin: false,
+        scrub: true,
+        invalidateOnRefresh: true,
+        onUpdate: (self) => {
+          rawProgress = self.progress;
+        },
+        onRefresh: (self) => {
+          rawProgress = self.progress;
+        },
+      });
+
       if (exitParallaxRef.current) {
         gsap.set(exitParallaxRef.current, { opacity: 1, y: 0, force3D: true });
         gsap.fromTo(
@@ -959,7 +922,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
               trigger: trackEl,
               start: "bottom bottom",
               end: "bottom 42%",
-              scrub: 0.28,
+              scrub: true,
               invalidateOnRefresh: true,
             },
           }
@@ -981,31 +944,37 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     };
 
     const onVideoSeeked = () => {
+      lastSeekIssuedMs = 0;
       if (!video || videoFatalErrorRef.current) return;
       if (video.readyState >= 2) {
         markDesktopFrameReady();
-        video.removeEventListener("seeked", onVideoSeeked);
       }
     };
 
     const onVideoLoadedData = () => {
       if (!video || videoFatalErrorRef.current) return;
+      if (video.readyState >= 2) {
+        markDesktopFrameReady();
+      }
       if (modeRef.current === "scrub") {
         video.pause();
-        const maxTime = Math.max(
-          INTRO_END_TIME,
-          (video.duration || 12.83) - 0.04
+        const dur = Number.isFinite(video.duration) && video.duration > INTRO_END_TIME
+          ? video.duration
+          : 12.875;
+        const maxSeekTime = Math.max(INTRO_END_TIME, dur - 0.04);
+        const syncedTime = Math.min(
+          maxSeekTime,
+          Math.max(
+            INTRO_END_TIME,
+            INTRO_END_TIME + smoothProgress * (dur - INTRO_END_TIME)
+          )
         );
-        const syncedTime =
-          INTRO_END_TIME +
-          playheadRef.current.progress * (maxTime - INTRO_END_TIME);
         renderedTimeRef.current = syncedTime;
         try {
-          lastDesktopSeekMs = performance.now();
+          lastSeekIssuedMs = performance.now();
           video.currentTime = syncedTime;
-          markDesktopFrameReady();
         } catch {
-          /* Reintentará en el siguiente ciclo de scroll */
+          /* Reintentará en el siguiente tick */
         }
       }
     };
@@ -1033,8 +1002,13 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
 
       introFinishedRef.current = false;
       modeRef.current = "intro";
-      playheadRef.current.progress = 0;
+      rawProgress = 0;
+      smoothProgress = 0;
+      desktopSettledExactApplied = false;
+      lastSeekIssuedMs = 0;
       renderedTimeRef.current = 0;
+      actsTimeline?.progress(0);
+      lastAppliedActsProgress = 0;
       lastRenderedCounterPct = 1;
       if (counterDigitsRef.current) {
         counterDigitsRef.current.textContent = "1";
@@ -1082,7 +1056,11 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     const startLowerSectionScenarioB = () => {
       introFinishedRef.current = true;
       modeRef.current = "scrub";
-      playheadRef.current.progress = 1;
+      rawProgress = 1;
+      smoothProgress = 1;
+      desktopSettledExactApplied = false;
+      actsTimeline?.progress(1);
+      lastAppliedActsProgress = 1;
       removeInteractionPrimers();
 
       lastRenderedCounterPct = 100;
@@ -1109,14 +1087,14 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       const setFinalVideoFrame = () => {
         if (!video || !canUseVideo || videoFatalErrorRef.current) return;
         video.pause();
-        const endFrame = Math.max(
-          INTRO_END_TIME,
-          (video.duration || 12.83) - 0.04
-        );
-        renderedTimeRef.current = endFrame;
+        const dur = Number.isFinite(video.duration) && video.duration > INTRO_END_TIME
+          ? video.duration
+          : 12.875;
+        const endTime = Math.max(INTRO_END_TIME, dur - 0.04);
+        renderedTimeRef.current = endTime;
         try {
-          lastDesktopSeekMs = performance.now();
-          video.currentTime = endFrame;
+          lastSeekIssuedMs = performance.now();
+          video.currentTime = endTime;
           markDesktopFrameReady();
         } catch {
           /* Poster permanece visible si el seek inicial no está disponible */
@@ -1160,23 +1138,29 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       isListeningScrollSave = true;
     });
 
+    const transitionIntroToScrubImmediate = () => {
+      modeRef.current = "scrub";
+      desktopSettledExactApplied = false;
+      if (video && canUseVideo) {
+        const currentSec =
+          video.readyState >= 2 && video.currentTime > 0
+            ? video.currentTime
+            : INTRO_END_TIME;
+        renderedTimeRef.current = Math.max(INTRO_END_TIME, currentSec);
+        video.pause();
+      } else {
+        renderedTimeRef.current = INTRO_END_TIME;
+      }
+      completeIntroAndRevealContent(true);
+    };
+
     const persistCurrentZone = (forceFlush = false) => {
       if (!isListeningScrollSave) return;
 
       const currentY = window.scrollY;
 
       if (modeRef.current === "intro" && currentY > 3) {
-        modeRef.current = "scrub";
-        if (video && canUseVideo) {
-          renderedTimeRef.current =
-            video.readyState >= 2 && video.currentTime > 0
-              ? video.currentTime
-              : INTRO_END_TIME;
-          video.pause();
-        } else {
-          renderedTimeRef.current = INTRO_END_TIME;
-        }
-        completeIntroAndRevealContent(true);
+        transitionIntroToScrubImmediate();
       }
 
       const activeTrackEnd = scrollTriggerInstance?.end ?? estimatedTrackEndPx;
@@ -1245,8 +1229,13 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       once: true,
     });
 
-    const syncFrame = () => {
+    /* Ticker sincronizado: amortiguación exponencial 1 - exp(-12 * dt) + seguro anti-bloqueo de seeking */
+    const syncFrame = (_timeSec: number, deltaTimeMs: number) => {
       const v = videoRef.current;
+
+      if (scrollTriggerInstance) {
+        rawProgress = scrollTriggerInstance.progress;
+      }
 
       if (modeRef.current === "intro") {
         const elapsedSec = (performance.now() - introBootClock) / 1000;
@@ -1264,14 +1253,8 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
           renderedTimeRef.current = videoSec;
         }
 
-        if (playheadRef.current.progress > 0.002) {
-          modeRef.current = "scrub";
-          if (v && canUseVideo) {
-            v.pause();
-          }
-          renderedTimeRef.current =
-            videoSec > 0 ? videoSec : INTRO_END_TIME;
-          completeIntroAndRevealContent(true);
+        if (rawProgress > 0.002) {
+          transitionIntroToScrubImmediate();
           return;
         }
 
@@ -1316,24 +1299,51 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
             v.pause();
             if (v.readyState >= 2 && !videoFatalErrorRef.current) {
               try {
-                /* Fija exactamente el I-frame completo de 2.500000s (fotograma 60 con -g 10) */
-                lastDesktopSeekMs = performance.now();
+                /* Fija exactamente el I-frame de reposo en 2.500000s (-g 6) */
+                lastSeekIssuedMs = performance.now();
                 v.currentTime = INTRO_END_TIME;
                 markDesktopFrameReady();
               } catch {
-                /* Conserva poster HD si el seek no está disponible aún */
+                /* Conserva poster si el seek aún no está disponible */
               }
             }
           }
           renderedTimeRef.current = INTRO_END_TIME;
+          desktopSettledExactApplied = false;
           modeRef.current = "scrub";
           completeIntroAndRevealContent(false);
         }
         return;
       }
 
+      if (!isHeroNearViewport) {
+        return;
+      }
+
+      const dtSeconds = Math.min(
+        0.05,
+        Math.max(0.001, (deltaTimeMs || 16.67) / 1000)
+      );
+      const progressDelta = rawProgress - smoothProgress;
+      const isProgressSettled = Math.abs(progressDelta) <= 0.00015;
+
+      if (isProgressSettled) {
+        smoothProgress = rawProgress;
+      } else {
+        desktopSettledExactApplied = false;
+        const factor = 1 - Math.exp(-DESKTOP_DAMPING_LAMBDA * dtSeconds);
+        smoothProgress += progressDelta * factor;
+      }
+
       if (
-        !isHeroNearViewport ||
+        actsTimeline &&
+        Math.abs(smoothProgress - lastAppliedActsProgress) > 0.00004
+      ) {
+        actsTimeline.progress(smoothProgress);
+        lastAppliedActsProgress = smoothProgress;
+      }
+
+      if (
         !v ||
         !canUseVideo ||
         videoFatalErrorRef.current ||
@@ -1344,42 +1354,40 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
         return;
       }
 
-      const maxTime = Math.max(INTRO_END_TIME, v.duration - 0.04);
-      const desiredTime =
-        INTRO_END_TIME +
-        playheadRef.current.progress * (maxTime - INTRO_END_TIME);
-
-      const delta = desiredTime - renderedTimeRef.current;
-
-      const isDesktopSettled = Math.abs(delta) <= 0.004;
-      if (!isDesktopSettled) {
-        desktopSettledExactApplied = false;
-        renderedTimeRef.current += delta * DESKTOP_SCRUB_LERP;
-      } else {
-        renderedTimeRef.current = desiredTime;
+      if (!v.paused) {
+        v.pause();
       }
 
+      const maxSeekTime = Math.max(INTRO_END_TIME, v.duration - 0.04);
       const targetTime = Math.min(
-        maxTime,
-        Math.max(INTRO_END_TIME, renderedTimeRef.current)
+        maxSeekTime,
+        Math.max(
+          INTRO_END_TIME,
+          INTRO_END_TIME + smoothProgress * (v.duration - INTRO_END_TIME)
+        )
       );
-      const nowMs = performance.now();
-      const diffFromVideo = Math.abs(targetTime - v.currentTime);
+      renderedTimeRef.current = targetTime;
 
-      /* Throttle acoplado a 24fps (~34ms / ~29Hz) + guardas estrictas para no saturar decodificador CPU/GPU */
-      if (!isDesktopSettled) {
+      const nowMs = performance.now();
+      /* Seguro anti-bloqueo: si video.seeking permaneciera true > 180ms sin disparar seeked, permite el siguiente seek */
+      const canSeekNow =
+        !v.seeking ||
+        (lastSeekIssuedMs > 0 &&
+          nowMs - lastSeekIssuedMs > DESKTOP_SEEK_STUCK_TIMEOUT_MS);
+      const timeDiff = Math.abs(targetTime - v.currentTime);
+
+      if (!isProgressSettled) {
         if (
           v.readyState >= 2 &&
-          !v.seeking &&
-          nowMs - lastDesktopSeekMs >= DESKTOP_SEEK_MIN_INTERVAL_MS &&
-          diffFromVideo >= DESKTOP_SEEK_MIN_DELTA_SEC
+          canSeekNow &&
+          timeDiff >= DESKTOP_SEEK_MIN_DELTA_SEC
         ) {
-          lastDesktopSeekMs = nowMs;
+          lastSeekIssuedMs = nowMs;
           v.currentTime = targetTime;
         }
-      } else if (!desktopSettledExactApplied && v.readyState >= 2 && !v.seeking) {
-        if (diffFromVideo >= 0.012) {
-          lastDesktopSeekMs = nowMs;
+      } else if (!desktopSettledExactApplied && v.readyState >= 2 && canSeekNow) {
+        if (timeDiff > 0.02) {
+          lastSeekIssuedMs = nowMs;
           v.currentTime = targetTime;
         }
         desktopSettledExactApplied = true;
@@ -1391,11 +1399,13 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     return () => {
       window.cancelAnimationFrame(enableTrackingRaf);
       if (revealDelayTimer) clearTimeout(revealDelayTimer);
+
       if (video) {
         video.removeEventListener("playing", onVideoPlaying);
         video.removeEventListener("seeked", onVideoSeeked);
         video.removeEventListener("loadeddata", onVideoLoadedData);
       }
+
       window.removeEventListener("scroll", onDesktopScroll);
       window.removeEventListener("pagehide", onDesktopPageHide);
       removeInteractionPrimers();
@@ -1438,7 +1448,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     >
       {/* Escenario sticky/fullscreen nativo en GPU (100lvh con fallback 100vh) */}
       <div className="hero-sticky-stage sticky top-0 w-full overflow-hidden bg-[#070B14]">
-        {/* Video de fondo 1:1 nítido (autoPlay loop fluido en móvil; scrubbing HD -v4 en escritorio) */}
+        {/* Video de fondo 1:1 nítido (autoPlay loop fluido en móvil; scrubbing directo en escritorio) */}
         <video
           ref={videoRef}
           src={resolvedVideoSrc}
@@ -1458,7 +1468,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
           }`}
         />
 
-        {/* Primer pintado instantáneo HD -v3 con fetchPriority="high" */}
+        {/* Primer pintado instantáneo HQ (-hq) con fetchPriority="high" */}
         <picture
           className={`pointer-events-none absolute inset-0 z-[1] block h-full w-full select-none transition-opacity duration-300 ${
             showPosterOverlay ? "opacity-100" : "opacity-0"

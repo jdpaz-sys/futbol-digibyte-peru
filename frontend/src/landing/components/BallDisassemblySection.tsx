@@ -114,14 +114,16 @@ export function BallDisassemblySection({
     const connection = getNetworkConnection();
 
     const evaluateDeviceMode = (resetVideoState: boolean) => {
-      const touchOrMobile = mobileQuery.matches || coarseQuery.matches;
+      const isNarrowViewport = mobileQuery.matches;
+      const touchOrMobile = isNarrowViewport || coarseQuery.matches;
       if (resetVideoState) {
         videoFatalErrorRef.current = false;
         setHasVideoError(false);
         setIsVideoFrameReady(false);
       }
       setIsMobileOrTouch(touchOrMobile);
-      setMediaVariant(touchOrMobile ? "mobile" : "desktop");
+      /* Selección de resolución por ancho real (< 768px 1280x720 HD vs >= 768px 1920x1080 1:1) */
+      setMediaVariant(isNarrowViewport ? "mobile" : "desktop");
     };
 
     const syncInitialClientEnv = () => {
@@ -187,7 +189,7 @@ export function BallDisassemblySection({
     !hasVideoError;
 
   const resolvedVideoSrc = shouldLoadVideo
-    ? isMobileOrTouch || mediaVariant === "mobile"
+    ? mediaVariant === "mobile"
       ? SITE_CONFIG.media.ballMobileMp4
       : SITE_CONFIG.media.ballDesktopMp4
     : undefined;

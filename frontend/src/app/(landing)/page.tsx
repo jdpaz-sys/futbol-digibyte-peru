@@ -3,7 +3,7 @@ import { LandingStage } from "@/landing/components/LandingStage";
 import { SITE_CONFIG } from "@/shared/site-config";
 
 export default function LandingHomePage() {
-  /* Precarga adaptativa exclusiva del poster WebP HD -v3 según viewport con fetchPriority="high" */
+  /* Precarga adaptativa del poster WebP HQ (-hq) según viewport; desktop usa hero-cancha-desktop-smooth.mp4 (+faststart) */
   preload(SITE_CONFIG.media.heroMobilePoster, {
     as: "image",
     type: "image/webp",

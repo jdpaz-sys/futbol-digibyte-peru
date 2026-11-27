@@ -1,8 +1,8 @@
 # Estado del Proyecto — Fútbol Digibyte Perú (v0.1)
 
-- **Fase actual:** **Fase 4A.1 + Transición Editorial de Salida del Hero 100% cerradas** en `develop` — **Backend 100% cerrado** (`v0.3-backend-100`). Lista para iniciar **Fase 4A.2**.
+- **Fase actual:** **Fase 4A (Landing Page 100% cerrada)** en `develop` — **Backend 100% cerrado** (`v0.3-backend-100`). Lista para iniciar **Fase 4B** (WebApp operativa).
 - **Autor:** Juan David Paz Pastor (Digibyte Perú)
-- **Última actualización:** 2026-11-26
+- **Última actualización:** 2026-11-27
 - **Autoría Git:** `jdpaz-sys` (rama activa: `develop`)
 
 ## Documentos de Contexto Vigentes
@@ -23,9 +23,9 @@
 - **Fase 3A — `reservas` (Jugador + Storage + Worker):** `LocalFileStorage` privado, disponibilidad/cotizador mixto RN-08/RN-09, Hold GIST (`23P01` -> `409`), comprobante manual (`POR_VALIDAR`), mis reservas/evidencia ACL y worker de expiración 30s (`FOR UPDATE SKIP LOCKED`).
 - **Fase 3B — `reservas` (Dueño + Notificaciones/Push) y `reportes`:** agenda `/api/v1/dueno/reservas` con `alerta_demora` >30 min, aprobar/rechazar, externas/bloqueos GIST, lector QR, check-in/No-Show, cancelaciones/reprogramación, `/api/v1/notificaciones` + push y `GET /api/v1/dueno/reportes/resumen`.
 - **Fase 3C — Cierre Operativo del Backend:** galería `/dueno/fotos`, foto de cancha, QR Yape/Plin y `GET /api/v1/public/media/*`; invalidación Valkey por slug; perfil/contraseña auth; worker CU-14 cada 5 min; Web Push VAPID opcional y CORS listo para Next.js.
-- **Fase 4A.1 — Base Frontend, Hero HD, Blindaje Cross-Device y Salida Editorial (`/`):** Next.js 16 + `pnpm`, separación estricta `src/landing/` vs `src/webapp/` (`gsap`/`lenis` 100% aislados; Lenis omitido en `pointer: coarse` 120Hz), videos H.264 High `bt709` `+faststart` (`hero-cancha-desktop-v2.mp4` 1080p CRF 17 y `hero-cancha-mobile-v2.mp4` 720x1280 CRF 18) con reposo en I-frame exacto `2.50s`, escenario GPU `sticky` `100lvh`/`100svh` (`170svh` móvil / `235vh–245vh` PC), tipografía editorial PC con gradiente blanco-plata, transición reversible de salida (`HeroExitTransition` con velo ascendente `#070B14` e iluminación progresiva por palabras), fallback Save-Data/Low-Power, HTTP 206 Range y Navbar glass marino neutro (`#0F172A`/35).
+- **Fase 4A.1 — Hero HD `-v3`, Blindaje Cross-Device y Salida Editorial (`/`):** Next.js 16 + `pnpm`, separación estricta `src/landing/` vs `src/webapp/` (`gsap`/`lenis` 100% aislados; Lenis omitido en `pointer: coarse`), `hero-cancha-desktop-v3.mp4` (1080p CRF 15 `-g 12 -bf 0`) con scrubbing PC y `hero-cancha-mobile-v3.mp4` (608x1080 nativo CRF 16 `-g 48 -bf 2`) con autoplay fluido en bucle + pausa `IntersectionObserver`, transición `HeroExitTransition` y Navbar glass adaptativo.
+- **Fase 4A.2 + 4A.3 — Balón Interactivo, Secuencia B2B Dueños y Cierre de Landing (`/`):** `BallDisassemblySection` sobre estudio `#FFFFFF` (`balon-desarme-desktop-v1.mp4` 1080p CRF 17 y `balon-desarme-mobile-v1.mp4` 960x540 CRF 18 en 16:9 H.264 High `bt709` 0 B-frames, fusión perimetral sin bordes y 3 actos) + `ClosingLaunchSection` nocturna `#070B14` (velo ascendente -> secuencia centrada B2B `#duenos` de 4 pasos con línea luminosa vertical -> cierre Apps Google Play 4 colores / App Store / App Web + Footer minimalista).
 
 ## Siguiente Paso Exacto (En Chat Nuevo)
 
-1. Iniciar **Fase 4A.2**: Sección blanca (`#FFFFFF`) de ingeniería y experiencia con `balon-desarme.mp4` (generado desde `/home/juandavid/Escritorio/videos_clip/`) controlado por scroll.
-2. Continuar con **Fase 4A.3** (cierre comercial B2B/B2C y footer de Landing) antes de pasar a la WebApp operativa en **Fase 4B**.
+1. Iniciar **Fase 4B**: WebApp operativa en `src/app/(app)/` y `src/webapp/` (`/explorar` con geolocalización sin persistir GPS, ficha por complejo, cotizador + Hold temporal, carga de comprobante Yape/Plin, billetera QR y paneles `/dueno` y `/admin`).

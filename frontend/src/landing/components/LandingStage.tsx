@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Lenis from "lenis";
+import { BallDisassemblySection } from "@/landing/components/BallDisassemblySection";
+import { ClosingLaunchSection } from "@/landing/components/ClosingLaunchSection";
 import { HeroExitTransition } from "@/landing/components/HeroExitTransition";
 import { HeroSection } from "@/landing/components/HeroSection";
 import { LandingHeader } from "@/landing/components/LandingHeader";
@@ -62,33 +64,71 @@ export function LandingStage() {
     }
   }, []);
 
+  const scrollToSectionSmooth = useCallback((targetSelector: string) => {
+    const targetEl = document.querySelector<HTMLElement>(targetSelector);
+    if (!targetEl) return;
+
+    const prefersReducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+
+    /* #duenos es un escenario sticky 100lvh a pantalla completa: offset 0 encaja al tope exacto */
+    const navOffset = targetSelector === "#duenos" ? 0 : -84;
+
+    if (lenisRef.current && !prefersReducedMotion) {
+      lenisRef.current.scrollTo(targetEl, {
+        offset: navOffset,
+        duration: 1.15,
+      });
+      return;
+    }
+
+    const targetY = Math.max(
+      0,
+      window.scrollY + targetEl.getBoundingClientRect().top + navOffset
+    );
+    window.scrollTo({
+      top: targetY,
+      behavior: prefersReducedMotion ? "auto" : "smooth",
+    });
+  }, []);
+
+  const scrollToTopSmooth = useCallback(() => {
+    const prefersReducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+
+    if (lenisRef.current && !prefersReducedMotion) {
+      lenisRef.current.scrollTo(0, { duration: 1.2 });
+      return;
+    }
+
+    window.scrollTo({
+      top: targetYZero(),
+      behavior: prefersReducedMotion ? "auto" : "smooth",
+    });
+  }, []);
+
   return (
-    <>
-      <LandingHeader />
+    <div id="top">
+      <LandingHeader onScrollToSection={scrollToSectionSmooth} />
 
       <main>
         <HeroSection onImmediateScroll={syncImmediateScroll} />
 
         <HeroExitTransition />
 
-        {/* Sección blanca (#FFFFFF) lista para conectar con Fase 4A.2 y validar recarga inferior */}
-        <section
-          id="transicion-fase-4a2"
-          aria-label="Inicio de sección blanca Fase 4A.2"
-          className="relative flex min-h-[85vh] items-center border-t border-[#E2E8F0] bg-[#FFFFFF] text-[#070B14]"
-        >
-          <div className="mx-auto flex w-full max-w-7xl flex-col items-start justify-between gap-3 px-6 py-20 sm:flex-row sm:items-center sm:px-8 lg:px-12">
-            <span className="tabular-mono text-xs font-medium tracking-[0.18em] text-[#475569] uppercase">
-              SIGUIENTE ESCENA · FASE 4A.2
-            </span>
-            <p className="text-sm text-[#64748B]">
-              Transición a estudio blanco puro{" "}
-              <span className="tabular-mono text-[#070B14]">#FFFFFF</span> lista
-              para la secuencia interactiva del balón.
-            </p>
-          </div>
-        </section>
+        <BallDisassemblySection onScrollToSection={scrollToSectionSmooth} />
+
+        <ClosingLaunchSection
+          onScrollToSection={scrollToSectionSmooth}
+          onScrollToTop={scrollToTopSmooth}
+        />
       </main>
-    </>
+    </div>
   );
+}
+
+function targetYZero(): number {
+  return 0;
 }

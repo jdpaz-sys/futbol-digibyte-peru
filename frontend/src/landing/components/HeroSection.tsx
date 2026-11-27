@@ -6,12 +6,9 @@ import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { SITE_CONFIG } from "@/shared/site-config";
 
-/* Keyframe exacto (I-frame pts_time = 2.500000s en desktop -g 12 y móvil -g 10 a 24fps) */
+/* Keyframe exacto en Desktop (-g 12 a 24fps -> I-frame pts_time = 2.500000s) */
 const INTRO_END_TIME = 2.5;
 const SLOW_NETWORK_INTRO_TIMEOUT_SEC = 1.8;
-const MOBILE_SEEK_MIN_INTERVAL_MS = 36;
-const MOBILE_SEEK_MIN_DELTA_SEC = 0.032;
-const MOBILE_SCRUB_LERP = 0.2;
 const DESKTOP_SCRUB_LERP = 0.16;
 const DESKTOP_SEEK_MIN_DELTA_SEC = 0.018;
 const SCROLL_STATE_KEY = "fdp_landing_scroll_zone_v1";
@@ -154,6 +151,8 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
   const [counterValue, setCounterValue] = useState(1);
   const [isCounterVisible, setIsCounterVisible] = useState(true);
   const [isContentRevealed, setIsContentRevealed] = useState(false);
+  const [hasScrolledPastMobileCue, setHasScrolledPastMobileCue] =
+    useState(false);
 
   /* Detección cliente de móvil/táctil (pointer: coarse o <= 767px), Save-Data y reduced-motion */
   useEffect(() => {
@@ -201,14 +200,13 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
   const shouldLoadVideo =
     mediaVariant !== null && !saveDataMode && !hasVideoError;
 
-  /* H.264 High CRF 17/18 -tune film acelerado por hardware tanto en Desktop como en Móvil */
+  /* H.264 High -v3: móvil autoplay CRF 16 (-g 48 -bf 2) y desktop scrubbing CRF 15 (-g 12 -bf 0) */
   const resolvedVideoSrc = shouldLoadVideo
     ? isMobileOrTouch || mediaVariant === "mobile"
       ? SITE_CONFIG.media.heroMobileMp4
       : SITE_CONFIG.media.heroDesktopMp4
     : undefined;
 
-  /* Respaldo ante caída total de red (-> Poster HD + 3 Actos operativos) */
   const handleVideoError = useCallback(() => {
     if (!resolvedVideoSrc) return;
     videoFatalErrorRef.current = true;
@@ -216,7 +214,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     setIsVideoFrameReady(false);
   }, [resolvedVideoSrc]);
 
-  /* Modo accesible reducido: I-frame exacto en 2.50s (o poster HD si Save-Data/error) */
+  /* Modo accesible reducido: fotograma estático limpio + mensaje protagonista visible */
   useEffect(() => {
     if (!reducedMotion || !mediaVariant) return;
 
@@ -266,10 +264,329 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     };
   }, [reducedMotion, mediaVariant, resolvedVideoSrc]);
 
-  /* Motor principal: escenario sticky GPU (pin: false) + I-frame 2.50s + fluidez PC/móvil */
+  /* =========================================================================
+     RAMA 1 — MÓVIL / TÁCTIL (< 768px o pointer: coarse):
+     Escenario limpio de 1 sola pantalla (100lvh/100svh), autoplay fluido en loop
+     SIN scroll-scrubbing (cero temblores), pausa inteligente con IntersectionObserver,
+     contador 1 -> 100 al cargar y señal discreta que se desvanece al bajar (> 24px).
+     ========================================================================= */
   useEffect(() => {
     const trackEl = trackRef.current;
-    if (reducedMotion || !mediaVariant || !trackEl) return;
+    if (reducedMotion || !mediaVariant || !isMobileOrTouch || !trackEl) return;
+
+    if ("scrollRestoration" in window.history) {
+      window.history.scrollRestoration = "manual";
+    }
+
+    gsap.registerPlugin(ScrollTrigger);
+    ScrollTrigger.config({ ignoreMobileResize: true });
+
+    const video = videoRef.current;
+    const canUseVideo = Boolean(video && resolvedVideoSrc);
+
+    const savedState = readSavedScrollState();
+    const initialBrowserScrollY = window.scrollY;
+    const reloadedDocument = !hasMountedLandingInSpa && isDocumentReload();
+    const lowerThresholdPx = Math.round(window.innerHeight * 0.45);
+
+    const isReloadInLowerSection =
+      reloadedDocument &&
+      (savedState?.zone === "lower" ||
+        (!savedState && initialBrowserScrollY > lowerThresholdPx));
+
+    const savedOffsetAfterHero =
+      savedState?.zone === "lower"
+        ? savedState.offsetAfterPin
+        : Math.max(28, initialBrowserScrollY);
+
+    let revealDelayTimer: ReturnType<typeof setTimeout> | undefined;
+    let isListeningScrollSave = false;
+    let isHeroIntersecting = true;
+    let hasNativeVideoAdvanced = false;
+    let mobileCueHiddenFlag = false;
+    const introBootClock = performance.now();
+
+    let clockFallbackState = {
+      active: !canUseVideo,
+      startMs: performance.now(),
+      baseSec: 0,
+    };
+
+    const activateClockFallback = (currentSec: number) => {
+      if (clockFallbackState.active) return;
+      clockFallbackState = {
+        active: true,
+        startMs: performance.now(),
+        baseSec: Math.min(INTRO_END_TIME, Math.max(0, currentSec)),
+      };
+    };
+
+    const completeMobileIntro = (immediate = false) => {
+      if (introFinishedRef.current) return;
+      introFinishedRef.current = true;
+      setCounterValue(100);
+      setIsCounterVisible(false);
+
+      if (immediate) {
+        setIsContentRevealed(true);
+      } else {
+        revealDelayTimer = setTimeout(() => {
+          setIsContentRevealed(true);
+        }, 180);
+      }
+    };
+
+    /* Suave parallax de salida únicamente sobre el texto mientras sube el velo #070B14 */
+    const ctx = gsap.context(() => {
+      gsap.set(act1Ref.current, { autoAlpha: 1, y: 0 });
+      if (exitParallaxRef.current) {
+        gsap.set(exitParallaxRef.current, { opacity: 1, y: 0 });
+        gsap.fromTo(
+          exitParallaxRef.current,
+          { opacity: 1, y: 0 },
+          {
+            opacity: 0,
+            y: -22,
+            ease: "none",
+            immediateRender: false,
+            scrollTrigger: {
+              trigger: trackEl,
+              start: "bottom bottom",
+              end: "bottom 46%",
+              scrub: 0.18,
+              invalidateOnRefresh: true,
+            },
+          }
+        );
+      }
+    }, trackEl);
+
+    const tryResumeAutoplay = () => {
+      if (!video || !canUseVideo || videoFatalErrorRef.current) return;
+      if (!isHeroIntersecting) return;
+      video.muted = true;
+      const playAttempt = video.play();
+      if (playAttempt !== undefined) {
+        playAttempt
+          .then(() => {
+            if (!isHeroIntersecting) {
+              video.pause();
+            } else {
+              setIsVideoFrameReady(true);
+            }
+          })
+          .catch(() => {
+            /* Silencioso ante Low Power Mode / ahorro de batería */
+            const elapsed = (performance.now() - introBootClock) / 1000;
+            activateClockFallback(Math.min(elapsed * 0.22, 0.4));
+          });
+      }
+    };
+
+    const onVideoPlaying = () => {
+      if (!video || videoFatalErrorRef.current) return;
+      if (!isHeroIntersecting) {
+        video.pause();
+        return;
+      }
+      hasNativeVideoAdvanced = true;
+      setIsVideoFrameReady(true);
+    };
+
+    const onVideoLoadedData = () => {
+      if (!video || videoFatalErrorRef.current) return;
+      setIsVideoFrameReady(true);
+      if (isHeroIntersecting) {
+        tryResumeAutoplay();
+      }
+    };
+
+    if (video && canUseVideo) {
+      video.defaultMuted = true;
+      video.muted = true;
+      video.loop = true;
+      video.playsInline = true;
+      video.setAttribute("muted", "");
+      video.setAttribute("loop", "");
+      video.setAttribute("playsinline", "");
+      video.setAttribute("webkit-playsinline", "true");
+      video.setAttribute("x5-playsinline", "true");
+      video.addEventListener("playing", onVideoPlaying);
+      video.addEventListener("loadeddata", onVideoLoadedData);
+      video.load();
+    }
+
+    /* IntersectionObserver (threshold: 0.05): pausa automática al salir de vista y reanuda al volver */
+    const heroVisibilityObserver = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        isHeroIntersecting = entry.isIntersecting;
+        if (!video || !canUseVideo || videoFatalErrorRef.current) return;
+
+        if (!entry.isIntersecting) {
+          if (!video.paused) {
+            video.pause();
+          }
+        } else if (video.paused) {
+          tryResumeAutoplay();
+        }
+      },
+      { threshold: 0.05 }
+    );
+    heroVisibilityObserver.observe(trackEl);
+
+    const startMobileLowerRestore = () => {
+      introFinishedRef.current = true;
+      mobileCueHiddenFlag = true;
+      setCounterValue(100);
+      setIsCounterVisible(false);
+      setIsContentRevealed(true);
+      setHasScrolledPastMobileCue(true);
+      onImmediateScroll(Math.round(savedOffsetAfterHero));
+      ScrollTrigger.refresh();
+      ScrollTrigger.update();
+    };
+
+    const startMobileTopIntro = () => {
+      onImmediateScroll(0);
+      writeSavedScrollState({ zone: "hero", offsetAfterPin: 0 });
+      introFinishedRef.current = false;
+      setCounterValue(1);
+      setIsCounterVisible(true);
+      setIsContentRevealed(false);
+      setHasScrolledPastMobileCue(false);
+      tryResumeAutoplay();
+    };
+
+    if (isReloadInLowerSection) {
+      startMobileLowerRestore();
+    } else {
+      startMobileTopIntro();
+    }
+
+    const enableTrackingRaf = window.requestAnimationFrame(() => {
+      hasMountedLandingInSpa = true;
+      isListeningScrollSave = true;
+    });
+
+    const onMobileScroll = () => {
+      const y = window.scrollY;
+      const nextCueHidden = y > 24;
+      if (nextCueHidden !== mobileCueHiddenFlag) {
+        mobileCueHiddenFlag = nextCueHidden;
+        setHasScrolledPastMobileCue(nextCueHidden);
+      }
+
+      if (!introFinishedRef.current && y > 8) {
+        completeMobileIntro(true);
+      }
+
+      if (!isListeningScrollSave) return;
+      if (y > lowerThresholdPx) {
+        writeSavedScrollState({
+          zone: "lower",
+          offsetAfterPin: Math.round(y),
+        });
+      } else {
+        writeSavedScrollState({ zone: "hero", offsetAfterPin: 0 });
+      }
+    };
+
+    const onFirstTouchUnlock = () => {
+      if (isHeroIntersecting && video && video.paused) {
+        tryResumeAutoplay();
+      }
+    };
+
+    window.addEventListener("scroll", onMobileScroll, { passive: true });
+    window.addEventListener("pagehide", onMobileScroll);
+    window.addEventListener("touchstart", onFirstTouchUnlock, {
+      passive: true,
+      once: true,
+    });
+
+    /* Reloj ligero solo durante los primeros ~2.5s del contador 1 -> 100 (jamás toca video.currentTime) */
+    const tickMobileCounter = () => {
+      if (introFinishedRef.current) return;
+
+      const elapsedSec = (performance.now() - introBootClock) / 1000;
+      const v = videoRef.current;
+      const videoSec =
+        v && canUseVideo && !videoFatalErrorRef.current && v.readyState >= 2
+          ? v.currentTime
+          : 0;
+
+      if (v && !v.paused && videoSec > 0.03) {
+        hasNativeVideoAdvanced = true;
+      }
+
+      const leadInSec = Math.min(elapsedSec * 0.22, 0.4);
+      if (
+        !clockFallbackState.active &&
+        (videoFatalErrorRef.current ||
+          (elapsedSec > SLOW_NETWORK_INTRO_TIMEOUT_SEC &&
+            !hasNativeVideoAdvanced))
+      ) {
+        activateClockFallback(Math.max(videoSec, leadInSec));
+      }
+
+      const effectiveSec = clockFallbackState.active
+        ? Math.min(
+            INTRO_END_TIME,
+            Math.max(
+              videoSec,
+              clockFallbackState.baseSec +
+                ((performance.now() - clockFallbackState.startMs) / 1000) * 1.2
+            )
+          )
+        : Math.max(videoSec, leadInSec);
+
+      const rawPct = Math.min(
+        100,
+        Math.max(1, Math.ceil((effectiveSec / INTRO_END_TIME) * 100))
+      );
+      setCounterValue((prev) => (rawPct > prev ? rawPct : prev));
+
+      if (effectiveSec >= INTRO_END_TIME) {
+        completeMobileIntro(false);
+        gsap.ticker.remove(tickMobileCounter);
+      }
+    };
+
+    if (!introFinishedRef.current) {
+      gsap.ticker.add(tickMobileCounter);
+    }
+
+    return () => {
+      window.cancelAnimationFrame(enableTrackingRaf);
+      if (revealDelayTimer) clearTimeout(revealDelayTimer);
+      heroVisibilityObserver.disconnect();
+      if (video) {
+        video.removeEventListener("playing", onVideoPlaying);
+        video.removeEventListener("loadeddata", onVideoLoadedData);
+      }
+      window.removeEventListener("scroll", onMobileScroll);
+      window.removeEventListener("pagehide", onMobileScroll);
+      window.removeEventListener("touchstart", onFirstTouchUnlock);
+      gsap.ticker.remove(tickMobileCounter);
+      ctx.revert();
+    };
+  }, [
+    reducedMotion,
+    mediaVariant,
+    isMobileOrTouch,
+    resolvedVideoSrc,
+    onImmediateScroll,
+  ]);
+
+  /* =========================================================================
+     RAMA 2 — ESCRITORIO (>= 768px con pointer: fine):
+     Scroll-scrubbing cinematográfico intacto (reposo en I-frame 2.50s + 3 actos + fix F5)
+     ========================================================================= */
+  useEffect(() => {
+    const trackEl = trackRef.current;
+    if (reducedMotion || !mediaVariant || isMobileOrTouch || !trackEl) return;
 
     if ("scrollRestoration" in window.history) {
       window.history.scrollRestoration = "manual";
@@ -284,11 +601,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     const getFallbackTrackScrollEndPx = () => {
       const measured = trackEl.offsetHeight - window.innerHeight;
       if (measured > 60) return Math.round(measured);
-      const fallbackFactor = isMobileOrTouch
-        ? 0.7
-        : window.innerWidth >= 1024
-          ? 1.45
-          : 1.35;
+      const fallbackFactor = window.innerWidth >= 1024 ? 1.45 : 1.35;
       return Math.round(window.innerHeight * fallbackFactor);
     };
 
@@ -309,7 +622,6 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
         ? savedState.offsetAfterPin
         : Math.max(28, initialBrowserScrollY - estimatedTrackEndPx);
 
-    /* Inicializa ScrollTrigger en scrollY = 0 para geometría limpia del track sticky */
     onImmediateScroll(0);
 
     let revealDelayTimer: ReturnType<typeof setTimeout> | undefined;
@@ -317,8 +629,6 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     let isListeningScrollSave = false;
     let hasPrimedInteraction = false;
     let hasNativeVideoAdvanced = false;
-    let lastMobileSeekMs = 0;
-    let settledExactSeekApplied = false;
     let desktopSettledExactApplied = false;
     let clockFallbackState = {
       active: !canUseVideo,
@@ -350,7 +660,6 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       }
     };
 
-    /* Único ajuste final exacto cuando el dedo suelta o la rueda del mouse se detiene */
     const snapVideoToRestedFrame = () => {
       const v = videoRef.current;
       if (
@@ -382,13 +691,10 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
           v.seeking ||
           Math.abs(exactDesiredTime - v.currentTime) <= 0.01
         ) {
-          settledExactSeekApplied = true;
           desktopSettledExactApplied = true;
           return;
         }
-        lastMobileSeekMs = performance.now();
         v.currentTime = exactDesiredTime;
-        settledExactSeekApplied = true;
         desktopSettledExactApplied = true;
       };
 
@@ -400,161 +706,99 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     };
 
     const ctx = gsap.context(() => {
-      const mm = gsap.matchMedia();
+      gsap.set(act1Ref.current, { autoAlpha: 1, y: 0 });
+      gsap.set([act2Ref.current, act3Ref.current], {
+        autoAlpha: 0,
+        y: 22,
+      });
 
-      mm.add(
-        {
-          isDesktop: "(min-width: 768px)",
-          isMobile: "(max-width: 767px)",
+      const tl = gsap.timeline({
+        defaults: { ease: "none" },
+        scrollTrigger: {
+          trigger: trackEl,
+          start: "top top",
+          end: "bottom bottom",
+          pin: false,
+          scrub: 0.3,
+          invalidateOnRefresh: true,
+          onScrubComplete: snapVideoToRestedFrame,
         },
-        (mediaCtx) => {
-          const isDesktop = Boolean(mediaCtx.conditions?.isDesktop);
+      });
 
-          gsap.set(act1Ref.current, { autoAlpha: 1, y: 0 });
-          gsap.set([act2Ref.current, act3Ref.current], {
-            autoAlpha: 0,
-            y: 22,
-          });
+      scrollTriggerInstance = tl.scrollTrigger ?? null;
 
-          const tl = gsap.timeline({
-            defaults: { ease: "none" },
+      tl.fromTo(
+        playheadRef.current,
+        { progress: 0 },
+        { progress: 1, duration: 1, ease: "none" },
+        0
+      );
+
+      tl.to(
+        act1Ref.current,
+        {
+          autoAlpha: 0,
+          y: -20,
+          duration: 0.1,
+          ease: "power2.inOut",
+        },
+        0.16
+      );
+
+      tl.fromTo(
+        act2Ref.current,
+        { autoAlpha: 0, y: 22 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.09,
+          ease: "power2.out",
+        },
+        0.32
+      );
+      tl.to(
+        act2Ref.current,
+        {
+          autoAlpha: 0,
+          y: -20,
+          duration: 0.09,
+          ease: "power2.inOut",
+        },
+        0.54
+      );
+
+      tl.fromTo(
+        act3Ref.current,
+        { autoAlpha: 0, y: 22 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.09,
+          ease: "power2.out",
+        },
+        0.69
+      );
+
+      if (exitParallaxRef.current) {
+        gsap.set(exitParallaxRef.current, { opacity: 1, y: 0 });
+        gsap.fromTo(
+          exitParallaxRef.current,
+          { opacity: 1, y: 0 },
+          {
+            opacity: 0,
+            y: -36,
+            ease: "none",
+            immediateRender: false,
             scrollTrigger: {
               trigger: trackEl,
-              start: "top top",
-              end: "bottom bottom",
-              pin: false,
-              scrub: isDesktop && !isMobileOrTouch ? 0.3 : 0.22,
+              start: "bottom bottom",
+              end: "bottom 42%",
+              scrub: 0.28,
               invalidateOnRefresh: true,
-              onScrubComplete: snapVideoToRestedFrame,
             },
-          });
-
-          scrollTriggerInstance = tl.scrollTrigger ?? null;
-
-          tl.fromTo(
-            playheadRef.current,
-            { progress: 0 },
-            { progress: 1, duration: 1, ease: "none" },
-            0
-          );
-
-          if (isDesktop) {
-            /* ESCRITORIO ÁGIL (235vh/245vh): ACTO 1 (0%–26%), ACTO 2 (32%–63%), ACTO 3 (69%–100%) sin solapamiento */
-            tl.to(
-              act1Ref.current,
-              {
-                autoAlpha: 0,
-                y: -20,
-                duration: 0.1,
-                ease: "power2.inOut",
-              },
-              0.16
-            );
-
-            tl.fromTo(
-              act2Ref.current,
-              { autoAlpha: 0, y: 22 },
-              {
-                autoAlpha: 1,
-                y: 0,
-                duration: 0.09,
-                ease: "power2.out",
-              },
-              0.32
-            );
-            tl.to(
-              act2Ref.current,
-              {
-                autoAlpha: 0,
-                y: -20,
-                duration: 0.09,
-                ease: "power2.inOut",
-              },
-              0.54
-            );
-
-            tl.fromTo(
-              act3Ref.current,
-              { autoAlpha: 0, y: 22 },
-              {
-                autoAlpha: 1,
-                y: 0,
-                duration: 0.09,
-                ease: "power2.out",
-              },
-              0.69
-            );
-          } else {
-            /* MÓVIL INTACTO (170svh): ACTO 1 (0%–26%), ACTO 2 (32%–62%), ACTO 3 (68%–100%) */
-            tl.to(
-              act1Ref.current,
-              {
-                autoAlpha: 0,
-                y: -18,
-                duration: 0.1,
-                ease: "power2.inOut",
-              },
-              0.16
-            );
-
-            tl.fromTo(
-              act2Ref.current,
-              { autoAlpha: 0, y: 20 },
-              {
-                autoAlpha: 1,
-                y: 0,
-                duration: 0.08,
-                ease: "power2.out",
-              },
-              0.32
-            );
-            tl.to(
-              act2Ref.current,
-              {
-                autoAlpha: 0,
-                y: -18,
-                duration: 0.08,
-                ease: "power2.inOut",
-              },
-              0.54
-            );
-
-            tl.fromTo(
-              act3Ref.current,
-              { autoAlpha: 0, y: 20 },
-              {
-                autoAlpha: 1,
-                y: 0,
-                duration: 0.09,
-                ease: "power2.out",
-              },
-              0.68
-            );
           }
-
-          /* Salida cinematográfica reversible: mientras el velo #070B14 asciende, el cierre del Hero flota y se disuelve */
-          if (exitParallaxRef.current) {
-            gsap.set(exitParallaxRef.current, { opacity: 1, y: 0 });
-            gsap.fromTo(
-              exitParallaxRef.current,
-              { opacity: 1, y: 0 },
-              {
-                opacity: 0,
-                y: isDesktop ? -36 : -24,
-                ease: "none",
-                immediateRender: false,
-                scrollTrigger: {
-                  trigger: trackEl,
-                  start: "bottom bottom",
-                  end: isDesktop ? "bottom 42%" : "bottom 46%",
-                  scrub: isDesktop && !isMobileOrTouch ? 0.28 : 0.2,
-                  invalidateOnRefresh: true,
-                },
-              }
-            );
-          }
-        }
-      );
+        );
+      }
     }, trackEl);
 
     const introBootClock = performance.now();
@@ -588,10 +832,9 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
           playheadRef.current.progress * (maxTime - INTRO_END_TIME);
         renderedTimeRef.current = syncedTime;
         try {
-          lastMobileSeekMs = performance.now();
           video.currentTime = syncedTime;
         } catch {
-          /* Se reintentará en el siguiente ciclo de scroll */
+          /* Reintentará en el siguiente ciclo de scroll */
         }
       }
     };
@@ -599,6 +842,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     if (video && canUseVideo) {
       video.defaultMuted = true;
       video.muted = true;
+      video.loop = false;
       video.playsInline = true;
       video.setAttribute("muted", "");
       video.setAttribute("playsinline", "");
@@ -642,7 +886,6 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
               }
             })
             .catch(() => {
-              /* NotAllowedError en iOS Low Power Mode o bloqueo de autoplay -> reloj rAF suave */
               video.pause();
               const elapsed = (performance.now() - introBootClock) / 1000;
               activateClockFallback(Math.min(elapsed * 0.2, 0.36));
@@ -666,7 +909,8 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       setIsCounterVisible(false);
       setIsContentRevealed(true);
 
-      const trackEnd = scrollTriggerInstance?.end ?? getFallbackTrackScrollEndPx();
+      const trackEnd =
+        scrollTriggerInstance?.end ?? getFallbackTrackScrollEndPx();
       const targetScrollY = Math.round(
         trackEnd + Math.max(28, savedOffsetAfterPin)
       );
@@ -684,7 +928,6 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
         );
         renderedTimeRef.current = endFrame;
         try {
-          lastMobileSeekMs = performance.now();
           video.currentTime = endFrame;
           setIsVideoFrameReady(true);
         } catch {
@@ -761,9 +1004,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       }
     };
 
-    /* Listener único multi-dispositivo (touchstart / pointerdown / wheel) para priming seguro */
     const removeInteractionPrimers = () => {
-      window.removeEventListener("touchstart", unlockVideoOnFirstInteraction);
       window.removeEventListener("pointerdown", unlockVideoOnFirstInteraction);
       window.removeEventListener("wheel", unlockVideoOnFirstInteraction);
     };
@@ -789,7 +1030,6 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
             if (modeRef.current !== "intro" || clockFallbackState.active) {
               video.pause();
               if (video.readyState >= 2) {
-                lastMobileSeekMs = performance.now();
                 video.currentTime = snapshotTime;
                 setIsVideoFrameReady(true);
               }
@@ -798,7 +1038,6 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
           .catch(() => {
             if (video.readyState >= 2 && modeRef.current === "scrub") {
               try {
-                lastMobileSeekMs = performance.now();
                 video.currentTime = snapshotTime;
               } catch {
                 /* Mantiene poster HD si el entorno restringe decodificación */
@@ -808,24 +1047,8 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       }
     }
 
-    const onMobileTouchRelease = () => {
-      settledExactSeekApplied = false;
-    };
-
     window.addEventListener("scroll", persistCurrentZone, { passive: true });
     window.addEventListener("pagehide", persistCurrentZone);
-    if (isMobileOrTouch) {
-      window.addEventListener("touchend", onMobileTouchRelease, {
-        passive: true,
-      });
-      window.addEventListener("touchcancel", onMobileTouchRelease, {
-        passive: true,
-      });
-    }
-    window.addEventListener("touchstart", unlockVideoOnFirstInteraction, {
-      passive: true,
-      once: true,
-    });
     window.addEventListener("pointerdown", unlockVideoOnFirstInteraction, {
       passive: true,
       once: true,
@@ -835,7 +1058,6 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       once: true,
     });
 
-    /* Bucle rAF vía gsap.ticker: reposo en I-frame 2.50s + scrubbing continuo PC/Móvil */
     const syncFrame = () => {
       const v = videoRef.current;
 
@@ -907,8 +1129,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
             v.pause();
             if (v.readyState >= 2 && !videoFatalErrorRef.current) {
               try {
-                /* Fija exactamente el I-frame completo de 2.500000s (cero P-frame drift) */
-                lastMobileSeekMs = performance.now();
+                /* Fija exactamente el I-frame completo de 2.500000s */
                 v.currentTime = INTRO_END_TIME;
                 setIsVideoFrameReady(true);
               } catch {
@@ -941,44 +1162,6 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
 
       const delta = desiredTime - renderedTimeRef.current;
 
-      /* Rama Móvil / Táctil intacta (120Hz anti-atasco: >= 36ms + >= 0.032s + ajuste final único) */
-      if (isMobileOrTouch) {
-        const isMobileSettled = Math.abs(delta) <= 0.004;
-
-        if (!isMobileSettled) {
-          settledExactSeekApplied = false;
-          renderedTimeRef.current += delta * MOBILE_SCRUB_LERP;
-        } else {
-          renderedTimeRef.current = desiredTime;
-        }
-
-        const targetTime = Math.min(
-          maxTime,
-          Math.max(0, renderedTimeRef.current)
-        );
-        const nowMs = performance.now();
-        const diffFromVideo = Math.abs(targetTime - v.currentTime);
-
-        if (!isMobileSettled) {
-          if (
-            !v.seeking &&
-            nowMs - lastMobileSeekMs >= MOBILE_SEEK_MIN_INTERVAL_MS &&
-            diffFromVideo >= MOBILE_SEEK_MIN_DELTA_SEC
-          ) {
-            lastMobileSeekMs = nowMs;
-            v.currentTime = targetTime;
-          }
-        } else if (!settledExactSeekApplied && !v.seeking) {
-          if (diffFromVideo >= 0.01) {
-            lastMobileSeekMs = nowMs;
-            v.currentTime = targetTime;
-          }
-          settledExactSeekApplied = true;
-        }
-        return;
-      }
-
-      /* Rama Escritorio calibrada (lerp 0.16 reactivo + umbral 0.018s + ajuste final exacto en reposo) */
       const isDesktopSettled = Math.abs(delta) <= 0.004;
       if (!isDesktopSettled) {
         desktopSettledExactApplied = false;
@@ -1017,8 +1200,6 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       }
       window.removeEventListener("scroll", persistCurrentZone);
       window.removeEventListener("pagehide", persistCurrentZone);
-      window.removeEventListener("touchend", onMobileTouchRelease);
-      window.removeEventListener("touchcancel", onMobileTouchRelease);
       removeInteractionPrimers();
       gsap.ticker.remove(syncFrame);
       ctx.revert();
@@ -1039,6 +1220,12 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
   const showPosterOverlay =
     !isVideoFrameReady || hasVideoError || saveDataMode;
 
+  const showMobileScrollCue =
+    isMobileOrTouch &&
+    !reducedMotion &&
+    isContentRevealed &&
+    !hasScrolledPastMobileCue;
+
   return (
     <section
       ref={trackRef}
@@ -1046,15 +1233,19 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       className={
         reducedMotion
           ? "hero-reduced-track relative w-full bg-[#070B14] text-white"
-          : "hero-scroll-track relative w-full bg-[#070B14] text-white"
+          : isMobileOrTouch
+            ? "hero-touch-track relative w-full bg-[#070B14] text-white"
+            : "hero-scroll-track relative w-full bg-[#070B14] text-white"
       }
     >
-      {/* Escenario sticky nativo en GPU (100lvh con fallback 100vh): cero recorte inferior en 20:9 */}
+      {/* Escenario sticky/fullscreen nativo en GPU (100lvh con fallback 100vh) */}
       <div className="hero-sticky-stage sticky top-0 w-full overflow-hidden bg-[#070B14]">
-        {/* Video de fondo 1:1 nítido (sin scale ni filter) cubriendo el 100% de 100lvh */}
+        {/* Video de fondo 1:1 nítido (autoPlay loop fluido en móvil; scrubbing HD en escritorio) */}
         <video
           ref={videoRef}
           src={resolvedVideoSrc}
+          autoPlay={isMobileOrTouch && shouldLoadVideo && !reducedMotion}
+          loop={isMobileOrTouch}
           muted
           playsInline
           preload={shouldLoadVideo ? "auto" : "none"}
@@ -1069,7 +1260,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
           }`}
         />
 
-        {/* Primer pintado instantáneo HD sobre el 100% de 100lvh */}
+        {/* Primer pintado instantáneo HD -v3 con fetchPriority="high" */}
         <picture
           className={`pointer-events-none absolute inset-0 z-[1] block h-full w-full select-none transition-opacity duration-300 ${
             showPosterOverlay ? "opacity-100" : "opacity-0"
@@ -1095,15 +1286,15 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
           />
         </picture>
 
-        {/* Único degradado sutil localizado detrás del bloque inferior; cielo, torres LED y césped 100% libres */}
+        {/* Degradado inferior sutil localizado detrás del texto */}
         <div
           aria-hidden="true"
-          className="hero-bottom-veil pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[36%] sm:h-[30%]"
+          className="hero-bottom-veil pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[40%] sm:h-[30%]"
         />
 
-        {/* Capa segura 100svh: textos, CTA y contador 1 -> 100 visibles con barra abierta o cerrada */}
+        {/* Capa segura 100svh */}
         <div className="hero-safe-ui-layer pointer-events-none absolute inset-x-0 top-0 z-10 w-full">
-          {/* Contador 1 -> 100 grande, grueso y con gradiente blanco -> gris plata elegante */}
+          {/* Contador 1 -> 100 */}
           {!reducedMotion ? (
             <div
               aria-hidden={!isCounterVisible}
@@ -1123,16 +1314,20 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
             </div>
           ) : null}
 
-          {/* Banda inferior segura en móvil (< lg) y editorial baja en desktop (lg:) */}
+          {/* Contenido protagonista */}
           <div
             data-revealed={isContentRevealed ? "true" : "false"}
-            className="hero-stage-reveal relative z-10 mx-auto flex h-full w-full max-w-7xl flex-col justify-end px-6 pb-[max(2.25rem,env(safe-area-inset-bottom))] sm:px-8 lg:px-12 lg:pb-12 xl:pb-14"
+            className={`hero-stage-reveal relative z-10 mx-auto flex h-full w-full max-w-7xl flex-col justify-end px-6 sm:px-8 lg:px-12 lg:pb-12 xl:pb-14 ${
+              isMobileOrTouch
+                ? "pb-[max(5.35rem,calc(env(safe-area-inset-bottom)+4.35rem))]"
+                : "pb-[max(2.25rem,env(safe-area-inset-bottom))]"
+            }`}
           >
             <div
               ref={exitParallaxRef}
               className="grid w-full grid-cols-1 grid-rows-1 items-end"
             >
-              {/* ACTO 1 */}
+              {/* ACTO 1 (protagonista único en móvil; primer acto en desktop) */}
               <div
                 ref={act1Ref}
                 className="hero-copy-clarity col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center lg:mx-0 lg:max-w-[30rem] lg:items-start lg:text-left xl:max-w-[34rem]"
@@ -1146,8 +1341,8 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
                   </span>
                 </h1>
 
-                <p className="mt-3.5 max-w-md text-[15px] leading-relaxed text-white/80 sm:text-[16.5px] lg:max-w-lg">
-                  Horarios reales, precios claros y reserva directa.
+                <p className="mt-3.5 max-w-lg text-[15px] leading-relaxed text-white/80 sm:text-[16.5px]">
+                  Mira horarios libres, compara precios y reserva al instante.
                 </p>
 
                 <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:gap-4 lg:items-center">
@@ -1155,7 +1350,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
                     href={SITE_CONFIG.routes.explore}
                     className="cta-pure-btn inline-flex min-h-[48px] items-center justify-center gap-2.5 rounded-full bg-white px-6 py-3 text-[14.5px] font-semibold text-[#070B14] transition-colors duration-300 hover:bg-[#2563EB] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white sm:min-h-[50px] sm:px-7 sm:text-[15px]"
                   >
-                    <span>Explorar canchas</span>
+                    <span>Ver canchas disponibles</span>
                     <CtaArrowIcon />
                   </Link>
 
@@ -1165,34 +1360,36 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
                 </div>
               </div>
 
-              {/* ACTO 2 */}
-              {!reducedMotion ? (
+              {/* ACTO 2 (exclusivo Desktop scrubbing) */}
+              {!reducedMotion && !isMobileOrTouch ? (
                 <div
                   ref={act2Ref}
                   className="hero-copy-clarity invisible col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center opacity-0 lg:max-w-3xl xl:max-w-4xl"
                 >
-                  <h2 className="hero-pc-title-primary font-display text-[clamp(1.85rem,4.1vw,3.3rem)] leading-[1.01] font-bold tracking-[-0.032em] text-white lg:text-[3rem] lg:leading-[1.02] lg:tracking-[-0.03em] xl:text-[3.5rem] 2xl:text-[3.85rem]">
-                    Congela tu turno al instante.
+                  <h2 className="hero-pc-title-primary font-display text-[clamp(1.85rem,4.1vw,3.3rem)] leading-[1.02] font-bold tracking-[-0.032em] text-white lg:text-[3rem] lg:leading-[1.02] lg:tracking-[-0.03em] xl:text-[3.5rem] 2xl:text-[3.85rem]">
+                    Paga tu adelanto con Yape o Plin.
                   </h2>
 
-                  <p className="mt-3 max-w-md text-[15px] leading-relaxed text-white/80 sm:text-[16.5px]">
-                    Paga directo con Yape o Plin. Cero cruces.
+                  <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-white/80 sm:text-[16.5px]">
+                    Mientras pagas, apartamos tu horario para que nadie más lo
+                    tome.
                   </p>
                 </div>
               ) : null}
 
-              {/* ACTO 3 */}
-              {!reducedMotion ? (
+              {/* ACTO 3 (exclusivo Desktop scrubbing) */}
+              {!reducedMotion && !isMobileOrTouch ? (
                 <div
                   ref={act3Ref}
                   className="hero-copy-clarity invisible col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center opacity-0 lg:max-w-3xl xl:max-w-4xl"
                 >
-                  <h2 className="hero-pc-title-primary font-display text-[clamp(1.85rem,4.1vw,3.3rem)] leading-[1.01] font-bold tracking-[-0.032em] text-white lg:text-[3rem] lg:leading-[1.02] lg:tracking-[-0.03em] xl:text-[3.5rem] 2xl:text-[3.85rem]">
-                    Llega directo con tu QR.
+                  <h2 className="hero-pc-title-primary font-display text-[clamp(1.85rem,4.1vw,3.3rem)] leading-[1.02] font-bold tracking-[-0.032em] text-white lg:text-[3rem] lg:leading-[1.02] lg:tracking-[-0.03em] xl:text-[3.5rem] 2xl:text-[3.85rem]">
+                    Tu cancha asegurada antes de salir.
                   </h2>
 
-                  <p className="mt-3 max-w-md text-[15px] leading-relaxed text-white/80 sm:text-[16.5px]">
-                    Ruta exacta a la puerta y listo para jugar.
+                  <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-white/80 sm:text-[16.5px]">
+                    Recibe tu pase digital de entrada con código QR y entra
+                    directo a jugar.
                   </p>
 
                   <div className="mt-6 flex justify-center">
@@ -1200,7 +1397,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
                       href={SITE_CONFIG.routes.explore}
                       className="cta-pure-btn inline-flex min-h-[48px] items-center justify-center gap-2.5 rounded-full bg-white px-6 py-3 text-[14.5px] font-semibold text-[#070B14] transition-colors duration-300 hover:bg-[#2563EB] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white sm:min-h-[50px] sm:px-7 sm:text-[15px]"
                     >
-                      <span>Explorar canchas</span>
+                      <span>Ver canchas disponibles</span>
                       <CtaArrowIcon />
                     </Link>
                   </div>
@@ -1208,6 +1405,23 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
               ) : null}
             </div>
           </div>
+
+          {/* Señal minimalista no invasiva solo en móvil: se desvanece suavemente apenas baja (> 24px) */}
+          {isMobileOrTouch && !reducedMotion ? (
+            <div
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 flex flex-col items-center gap-1.5 transition-opacity duration-300 ${
+                showMobileScrollCue ? "opacity-100" : "opacity-0"
+              }`}
+            >
+              <span className="tabular-mono pl-[0.2em] text-[11px] font-medium tracking-[0.2em] text-white/55 uppercase">
+                Desliza para explorar
+              </span>
+              <span className="relative h-6 w-px overflow-hidden bg-white/20">
+                <span className="hero-mobile-scroll-dot absolute top-0 left-1/2 -ml-[1.5px] h-[5px] w-[3px] rounded-full bg-white" />
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
     </section>

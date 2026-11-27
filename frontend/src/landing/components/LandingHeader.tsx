@@ -1,12 +1,25 @@
 "use client";
 
+import type { MouseEvent } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { SITE_CONFIG } from "@/shared/site-config";
 import { useScrollThreshold } from "@/landing/hooks/useScrollThreshold";
 
-export function LandingHeader() {
+interface LandingHeaderProps {
+  onScrollToSection?: (targetSelector: string) => void;
+}
+
+export function LandingHeader({ onScrollToSection }: LandingHeaderProps) {
   const { isScrolled, isOnLightSurface } = useScrollThreshold(24);
+
+  const handleOwnersClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!onScrollToSection) return;
+    const targetEl = document.querySelector(SITE_CONFIG.routes.ownersAnchor);
+    if (!targetEl) return;
+    event.preventDefault();
+    onScrollToSection(SITE_CONFIG.routes.ownersAnchor);
+  };
 
   return (
     <header
@@ -15,9 +28,9 @@ export function LandingHeader() {
       }`}
     >
       <div
-        className={`mx-auto flex max-w-7xl items-center justify-between gap-2 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        className={`mx-auto flex max-w-7xl items-center justify-between gap-2 transition-all duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${
           isOnLightSurface
-            ? "header-glass-light rounded-full border border-[#0F172A]/10 px-3.5 py-2 sm:px-5 sm:py-2.5"
+            ? "header-glass-light rounded-full border border-[#0F172A]/10 bg-white/65 px-3.5 py-2 backdrop-blur-xl sm:px-5 sm:py-2.5"
             : isScrolled
               ? "header-glass-dark rounded-full border border-white/15 bg-[#0F172A]/35 px-3.5 py-2 backdrop-blur-xl sm:px-5 sm:py-2.5"
               : "rounded-full border border-transparent bg-transparent px-1.5 py-1.5 sm:px-2"
@@ -27,7 +40,11 @@ export function LandingHeader() {
         <Link
           href={SITE_CONFIG.routes.home}
           aria-label={`Ir al inicio de ${SITE_CONFIG.name}`}
-          className="group flex min-w-0 items-center gap-2 rounded-full focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white/70 sm:gap-2.5"
+          className={`group flex min-w-0 items-center gap-2 rounded-full focus-visible:outline-2 focus-visible:outline-offset-4 sm:gap-2.5 ${
+            isOnLightSurface
+              ? "focus-visible:outline-[#070B14]"
+              : "focus-visible:outline-white/70"
+          }`}
         >
           <Image
             src={SITE_CONFIG.media.logo}
@@ -51,22 +68,23 @@ export function LandingHeader() {
           aria-label="Accesos principales"
           className="flex shrink-0 items-center gap-3 sm:gap-5"
         >
-          <Link
-            href={SITE_CONFIG.routes.login}
+          <a
+            href={SITE_CONFIG.routes.ownersAnchor}
+            onClick={handleOwnersClick}
             className={`relative py-1.5 text-[12.5px] font-medium whitespace-nowrap transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-4 sm:text-sm ${
               isOnLightSurface
-                ? "text-[#070B14]/70 hover:text-[#070B14] focus-visible:outline-[#070B14]"
+                ? "text-[#070B14]/75 hover:text-[#070B14] focus-visible:outline-[#070B14]"
                 : "text-white/80 hover:text-white focus-visible:outline-white/70"
             }`}
           >
             Soy dueño
-          </Link>
+          </a>
 
           <Link
             href={SITE_CONFIG.routes.explore}
             className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[12.5px] font-semibold whitespace-nowrap transition-colors duration-300 focus-visible:outline-2 focus-visible:outline-offset-4 sm:min-h-[40px] sm:px-4.5 sm:py-2 sm:text-sm ${
               isOnLightSurface
-                ? "border-[#070B14]/15 bg-[#070B14] text-white hover:border-[#2563EB] hover:bg-[#2563EB] focus-visible:outline-[#070B14]"
+                ? "border-[#070B14] bg-[#070B14] text-white hover:border-[#2563EB] hover:bg-[#2563EB] focus-visible:outline-[#070B14]"
                 : "header-cta-glass-dark border-white/15 bg-white/[0.06] text-white hover:border-white hover:bg-white hover:text-[#070B14] focus-visible:outline-white/70"
             }`}
           >

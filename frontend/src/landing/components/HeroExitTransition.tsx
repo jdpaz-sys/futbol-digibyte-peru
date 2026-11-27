@@ -4,31 +4,53 @@ import { useEffect, useRef } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 
-const EDITORIAL_STATEMENT =
-  "Reservar una cancha nunca debió tomar tantos mensajes.";
-const EDITORIAL_WORDS = EDITORIAL_STATEMENT.split(" ");
+const HERO_EXIT_STATEMENT =
+  "Deja de escribir a cinco canchas para encontrar una libre.";
 
-export function HeroExitTransition() {
+export interface EditorialWordBridgeProps {
+  statement: string;
+  ariaLabel: string;
+  trackClassName?: string;
+  wordsStartTrigger?: string;
+  withTopFeather?: boolean;
+  withExitDrift?: boolean;
+}
+
+export function EditorialWordBridge({
+  statement,
+  ariaLabel,
+  trackClassName = "hero-exit-track",
+  wordsStartTrigger = "top 24%",
+  withTopFeather = false,
+  withExitDrift = true,
+}: EditorialWordBridgeProps) {
   const sectionRef = useRef<HTMLElement | null>(null);
   const featherRef = useRef<HTMLDivElement | null>(null);
+  const phraseWrapRef = useRef<HTMLParagraphElement | null>(null);
   const wordRefs = useRef<Array<HTMLSpanElement | null>>([]);
+
+  const wordsList = statement.split(" ");
 
   useEffect(() => {
     const sectionEl = sectionRef.current;
+    if (!sectionEl) return;
+
     const featherEl = featherRef.current;
-    if (!sectionEl || !featherEl) return;
+    const phraseWrapEl = phraseWrapRef.current;
 
     const prefersReducedMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)"
     ).matches;
 
-    const words = wordRefs.current.filter(
+    const wordNodes = wordRefs.current.filter(
       (node): node is HTMLSpanElement => node !== null
     );
 
     if (prefersReducedMotion) {
-      gsap.set(featherEl, { clearProps: "transform" });
-      gsap.set(words, { opacity: 1 });
+      if (featherEl) gsap.set(featherEl, { clearProps: "transform" });
+      if (phraseWrapEl)
+        gsap.set(phraseWrapEl, { clearProps: "transform,opacity,visibility" });
+      gsap.set(wordNodes, { opacity: 1 });
       return;
     }
 
@@ -38,34 +60,45 @@ export function HeroExitTransition() {
     const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
 
     const ctx = gsap.context(() => {
-      gsap.set(featherEl, { scaleY: 0.05 });
-      gsap.set(words, { opacity: 0.18 });
+      if (withTopFeather && featherEl) {
+        gsap.set(featherEl, { scaleY: 0.05 });
 
-      /* Velo atmosférico ascendente: crece suavemente al salir del Acto 3 sin corte horizontal */
-      gsap.fromTo(
-        featherEl,
-        { scaleY: 0.05 },
-        {
-          scaleY: 1.06,
-          ease: "power1.out",
-          immediateRender: false,
-          scrollTrigger: {
-            trigger: sectionEl,
-            start: "top bottom",
-            end: "top 50%",
-            scrub: isCoarsePointer ? 0.18 : 0.26,
-            invalidateOnRefresh: true,
-          },
+        /* Velo atmosférico ascendente en #070B14: absorbe la escena previa sin corte horizontal */
+        gsap.fromTo(
+          featherEl,
+          { scaleY: 0.05 },
+          {
+            scaleY: 1.06,
+            ease: "power1.out",
+            immediateRender: false,
+            scrollTrigger: {
+              trigger: sectionEl,
+              start: "top bottom",
+              end: "top 46%",
+              scrub: isCoarsePointer ? 0.18 : 0.26,
+              invalidateOnRefresh: true,
+            },
+          }
+        );
+      }
+
+      /* Iluminación progresiva ligera y serena (mismo ritmo fluido de Dueños) */
+      if (wordNodes.length > 0) {
+        gsap.set(wordNodes, { opacity: 0.16 });
+        if (phraseWrapEl) {
+          gsap.set(phraseWrapEl, { autoAlpha: 1, y: 10, scale: 1 });
         }
-      );
 
-      /* Iluminación progresiva palabra por palabra (slate tenue -> blanco-plata nítido) */
-      if (words.length > 0) {
+        const wordStagger =
+          wordNodes.length > 1
+            ? Number(((0.7 - 0.2) / (wordNodes.length - 1)).toFixed(4))
+            : 0;
+
         const wordsTl = gsap.timeline({
           defaults: { ease: "none" },
           scrollTrigger: {
             trigger: sectionEl,
-            start: "top 22%",
+            start: wordsStartTrigger,
             end: "bottom bottom",
             pin: false,
             scrub: isCoarsePointer ? 0.2 : 0.28,
@@ -73,49 +106,84 @@ export function HeroExitTransition() {
           },
         });
 
+        if (phraseWrapEl) {
+          wordsTl.fromTo(
+            phraseWrapEl,
+            { y: 10 },
+            { y: -4, duration: 0.85, ease: "none" },
+            0
+          );
+        }
+
         wordsTl.fromTo(
-          words,
-          { opacity: 0.18 },
+          wordNodes,
+          { opacity: 0.16 },
           {
             opacity: 1,
-            duration: 0.22,
-            stagger: 0.082,
+            duration: 0.2,
+            stagger: wordStagger,
             ease: "power1.inOut",
           },
           0
         );
 
-        /* Pausa editorial breve con la declaración 100% iluminada antes de salir hacia Fase 4A.2 */
-        wordsTl.to({}, { duration: 0.21 }, 0.79);
+        /* Meseta cómoda de lectura con todas las palabras iluminadas (0.70 -> 1.00) */
+        wordsTl.to({}, { duration: 0.3 }, 0.7);
+      }
+
+      /* Desvanecimiento limpio ANTES de acercarse al navbar (jamás queda texto cortado arriba) */
+      if (withExitDrift && phraseWrapEl) {
+        gsap.fromTo(
+          phraseWrapEl,
+          { autoAlpha: 1, scale: 1, y: -4 },
+          {
+            autoAlpha: 0,
+            scale: 0.96,
+            y: 22,
+            ease: "power1.inOut",
+            immediateRender: false,
+            scrollTrigger: {
+              trigger: sectionEl,
+              start: "bottom bottom",
+              end: "bottom 64%",
+              scrub: isCoarsePointer ? 0.16 : 0.24,
+              invalidateOnRefresh: true,
+            },
+          }
+        );
       }
     }, sectionEl);
 
     return () => {
       ctx.revert();
     };
-  }, []);
+  }, [statement, wordsStartTrigger, withTopFeather, withExitDrift]);
 
   return (
-    <section
-      ref={sectionRef}
-      aria-label="Declaración editorial Fútbol Digibyte Perú"
-      className="hero-exit-track relative z-20 w-full bg-[#070B14] text-white [overflow-x:clip]"
+    <div
+      ref={(el) => {
+        sectionRef.current = el;
+      }}
+      role="region"
+      aria-label={ariaLabel}
+      className={`${trackClassName} relative z-20 w-full bg-[#070B14] text-white [overflow-x:clip]`}
     >
-      {/* Manto degradado ascendente (~40vh–44vh) que envuelve la cancha de abajo hacia arriba sin borde duro */}
-      <div
-        ref={featherRef}
-        aria-hidden="true"
-        className="hero-exit-feather pointer-events-none absolute inset-x-0 bottom-[calc(100%-2px)] z-10"
-      />
+      {withTopFeather ? (
+        <div
+          ref={featherRef}
+          aria-hidden="true"
+          className="hero-exit-feather pointer-events-none absolute inset-x-0 bottom-[calc(100%-2px)] z-10"
+        />
+      ) : null}
 
-      {/* Lienzo silencioso sticky 100lvh con centrado óptico en 100svh */}
       <div className="hero-sticky-stage sticky top-0 w-full bg-[#070B14] [overflow-x:clip]">
         <div className="hero-safe-ui-layer mx-auto flex w-full max-w-5xl items-center justify-center px-6 sm:px-10 lg:px-16">
           <p
-            aria-label={EDITORIAL_STATEMENT}
-            className="font-display max-w-[18.5ch] text-center text-[clamp(1.7rem,6.6vw,2.15rem)] leading-[1.12] font-semibold tracking-[-0.03em] text-balance sm:max-w-[20ch] sm:text-[2.25rem] md:text-[2.45rem] lg:text-[2.6rem] lg:leading-[1.12] lg:tracking-[-0.03em] xl:text-[3.1rem] 2xl:text-[3.4rem]"
+            ref={phraseWrapRef}
+            aria-label={statement}
+            className="font-display max-w-[20ch] text-center text-[clamp(1.75rem,6.6vw,2.2rem)] leading-[1.12] font-semibold tracking-[-0.032em] text-balance sm:max-w-[21ch] sm:text-[2.3rem] md:text-[2.5rem] lg:text-[2.7rem] lg:leading-[1.1] xl:text-[3.2rem] 2xl:text-[3.5rem]"
           >
-            {EDITORIAL_WORDS.map((word, index) => (
+            {wordsList.map((word, index) => (
               <span key={`${word}-${index}`} aria-hidden="true">
                 <span
                   ref={(el) => {
@@ -125,12 +193,25 @@ export function HeroExitTransition() {
                 >
                   {word}
                 </span>
-                {index < EDITORIAL_WORDS.length - 1 ? " " : ""}
+                {index < wordsList.length - 1 ? " " : ""}
               </span>
             ))}
           </p>
         </div>
       </div>
-    </section>
+    </div>
+  );
+}
+
+export function HeroExitTransition() {
+  return (
+    <EditorialWordBridge
+      statement={HERO_EXIT_STATEMENT}
+      ariaLabel="Declaración editorial Fútbol Digibyte Perú"
+      trackClassName="hero-exit-track"
+      wordsStartTrigger="top 24%"
+      withTopFeather
+      withExitDrift
+    />
   );
 }

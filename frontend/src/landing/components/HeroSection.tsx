@@ -355,7 +355,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
 
       actNodes.forEach((node, idx) => {
         if (node && idx !== nextIndex && node !== prevEl) {
-          gsap.set(node, { autoAlpha: 0, y: 20 });
+          gsap.set(node, { autoAlpha: 0, y: 12 });
         }
       });
 
@@ -365,7 +365,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
           prevEl,
           {
             autoAlpha: 0,
-            y: -18,
+            y: -12,
             duration: 0.42,
             ease: "power2.inOut",
           },
@@ -375,7 +375,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
 
       switchTl.fromTo(
         nextEl,
-        { autoAlpha: 0, y: 20 },
+        { autoAlpha: 0, y: 12 },
         {
           autoAlpha: 1,
           y: 0,
@@ -432,7 +432,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       gsap.set(act1Ref.current, { autoAlpha: 1, y: 0 });
       gsap.set([act2Ref.current, act3Ref.current], {
         autoAlpha: 0,
-        y: 20,
+        y: 12,
       });
 
       if (exitParallaxRef.current) {
@@ -1429,84 +1429,104 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
                 : "pb-[max(2.25rem,env(safe-area-inset-bottom))]"
             }`}
           >
-            <div
-              ref={exitParallaxRef}
-              className="grid w-full grid-cols-1 grid-rows-1 items-end"
-            >
-              {/* ACTO 1 (primer acto en cascada tanto en móvil como en desktop) */}
-              <div
-                ref={act1Ref}
-                className="hero-copy-clarity col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center lg:mx-0 lg:max-w-[30rem] lg:items-start lg:text-left xl:max-w-[34rem]"
-              >
-                <h1 className="font-display text-[clamp(1.95rem,4.4vw,3.75rem)] leading-[0.99] font-bold tracking-[-0.032em] lg:text-[3rem] lg:leading-[1.02] lg:tracking-[-0.03em] xl:text-[3.5rem] 2xl:text-[3.85rem]">
-                  <span className="hero-pc-title-primary block text-white">
-                    Separa tu cancha en segundos.
-                  </span>
-                  <span className="hero-pc-title-secondary mt-1 block text-white/75 lg:mt-1.5">
-                    Sin esperar por WhatsApp.
-                  </span>
-                </h1>
+            <div ref={exitParallaxRef} className="flex w-full flex-col">
+              <div className="grid w-full grid-cols-1 grid-rows-1 items-end">
+                {/* ACTO 1 (primer acto en cascada tanto en móvil como en desktop) */}
+                <div
+                  ref={act1Ref}
+                  className="hero-copy-clarity col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center lg:mx-0 lg:max-w-[30rem] lg:items-start lg:text-left xl:max-w-[34rem]"
+                >
+                  <h1 className="font-display text-[clamp(1.95rem,4.4vw,3.75rem)] leading-[0.99] font-bold tracking-[-0.032em] lg:text-[3rem] lg:leading-[1.02] lg:tracking-[-0.03em] xl:text-[3.5rem] 2xl:text-[3.85rem]">
+                    <span className="hero-pc-title-primary block text-white">
+                      Separa tu cancha en segundos.
+                    </span>
+                    <span className="hero-pc-title-secondary mt-1 block text-white/75 lg:mt-1.5">
+                      Sin esperar por WhatsApp.
+                    </span>
+                  </h1>
 
-                <p className="mt-3.5 max-w-lg text-[15px] leading-relaxed text-white/80 sm:text-[16.5px]">
-                  Mira horarios libres, compara precios y reserva al instante.
-                </p>
+                  <p className="mt-3.5 max-w-lg text-[15px] leading-relaxed text-white/80 sm:text-[16.5px]">
+                    Mira horarios libres, compara precios y reserva al instante.
+                  </p>
 
-                <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:gap-4 lg:items-center">
+                  {!isMobileOrTouch ? (
+                    <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:gap-4 lg:items-center">
+                      <Link
+                        href={SITE_CONFIG.routes.explore}
+                        className="cta-pure-btn inline-flex min-h-[48px] items-center justify-center gap-2.5 rounded-full bg-white px-6 py-3 text-[14.5px] font-semibold text-[#070B14] transition-colors duration-300 hover:bg-[#2563EB] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white sm:min-h-[50px] sm:px-7 sm:text-[15px]"
+                      >
+                        <span>Ver canchas disponibles</span>
+                        <CtaArrowIcon />
+                      </Link>
+
+                      <span className="text-xs text-white/65 sm:text-[13px]">
+                        Sin crear cuenta
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* ACTO 2 (en bucle automático en móvil; scrubbing en desktop) */}
+                {!reducedMotion ? (
+                  <div
+                    ref={act2Ref}
+                    className="hero-copy-clarity invisible col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center opacity-0 lg:max-w-3xl xl:max-w-4xl"
+                  >
+                    <h2 className="hero-pc-title-primary font-display text-[clamp(1.9rem,5.8vw,3.3rem)] leading-[1.04] font-bold tracking-[-0.032em] text-white sm:text-[clamp(1.85rem,4.1vw,3.3rem)] sm:leading-[1.02] lg:text-[3rem] lg:leading-[1.02] lg:tracking-[-0.03em] xl:text-[3.5rem] 2xl:text-[3.85rem]">
+                      Paga tu adelanto con Yape o Plin.
+                    </h2>
+
+                    <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-white/80 sm:text-[16.5px]">
+                      Mientras pagas, apartamos tu horario para que nadie más lo
+                      tome.
+                    </p>
+                  </div>
+                ) : null}
+
+                {/* ACTO 3 (en bucle automático en móvil; scrubbing en desktop) */}
+                {!reducedMotion ? (
+                  <div
+                    ref={act3Ref}
+                    className="hero-copy-clarity invisible col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center opacity-0 lg:max-w-3xl xl:max-w-4xl"
+                  >
+                    <h2 className="hero-pc-title-primary font-display text-[clamp(1.9rem,5.8vw,3.3rem)] leading-[1.04] font-bold tracking-[-0.032em] text-white sm:text-[clamp(1.85rem,4.1vw,3.3rem)] sm:leading-[1.02] lg:text-[3rem] lg:leading-[1.02] lg:tracking-[-0.03em] xl:text-[3.5rem] 2xl:text-[3.85rem]">
+                      Tu cancha asegurada antes de salir.
+                    </h2>
+
+                    <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-white/80 sm:text-[16.5px]">
+                      Recibe tu pase digital de entrada con código QR y entra
+                      directo a jugar.
+                    </p>
+
+                    {!isMobileOrTouch ? (
+                      <div className="mt-6 flex justify-center">
+                        <Link
+                          href={SITE_CONFIG.routes.explore}
+                          className="cta-pure-btn inline-flex min-h-[48px] items-center justify-center gap-2.5 rounded-full bg-white px-6 py-3 text-[14.5px] font-semibold text-[#070B14] transition-colors duration-300 hover:bg-[#2563EB] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white sm:min-h-[50px] sm:px-7 sm:text-[15px]"
+                        >
+                          <span>Ver canchas disponibles</span>
+                          <CtaArrowIcon />
+                        </Link>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              {/* CTA fijo exclusivo de móvil: siempre presente con aire equilibrado (mt-7) bajo las 3 frases */}
+              {isMobileOrTouch ? (
+                <div className="mt-7 flex flex-col items-center gap-2">
                   <Link
                     href={SITE_CONFIG.routes.explore}
-                    className="cta-pure-btn inline-flex min-h-[48px] items-center justify-center gap-2.5 rounded-full bg-white px-6 py-3 text-[14.5px] font-semibold text-[#070B14] transition-colors duration-300 hover:bg-[#2563EB] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white sm:min-h-[50px] sm:px-7 sm:text-[15px]"
+                    className="cta-pure-btn inline-flex min-h-[48px] items-center justify-center gap-2.5 rounded-full bg-white px-6 py-3 text-[14.5px] font-semibold text-[#070B14] transition-colors duration-300 hover:bg-[#2563EB] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
                   >
                     <span>Ver canchas disponibles</span>
                     <CtaArrowIcon />
                   </Link>
 
-                  <span className="text-xs text-white/65 sm:text-[13px]">
+                  <span className="hero-copy-clarity text-xs text-white/65">
                     Sin crear cuenta
                   </span>
-                </div>
-              </div>
-
-              {/* ACTO 2 (interpolado al hacer scroll en móvil y desktop) */}
-              {!reducedMotion ? (
-                <div
-                  ref={act2Ref}
-                  className="hero-copy-clarity invisible col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center opacity-0 lg:max-w-3xl xl:max-w-4xl"
-                >
-                  <h2 className="hero-pc-title-primary font-display text-[clamp(1.9rem,5.8vw,3.3rem)] leading-[1.04] font-bold tracking-[-0.032em] text-white sm:text-[clamp(1.85rem,4.1vw,3.3rem)] sm:leading-[1.02] lg:text-[3rem] lg:leading-[1.02] lg:tracking-[-0.03em] xl:text-[3.5rem] 2xl:text-[3.85rem]">
-                    Paga tu adelanto con Yape o Plin.
-                  </h2>
-
-                  <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-white/80 sm:text-[16.5px]">
-                    Mientras pagas, apartamos tu horario para que nadie más lo
-                    tome.
-                  </p>
-                </div>
-              ) : null}
-
-              {/* ACTO 3 (interpolado al hacer scroll en móvil y desktop) */}
-              {!reducedMotion ? (
-                <div
-                  ref={act3Ref}
-                  className="hero-copy-clarity invisible col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center opacity-0 lg:max-w-3xl xl:max-w-4xl"
-                >
-                  <h2 className="hero-pc-title-primary font-display text-[clamp(1.9rem,5.8vw,3.3rem)] leading-[1.04] font-bold tracking-[-0.032em] text-white sm:text-[clamp(1.85rem,4.1vw,3.3rem)] sm:leading-[1.02] lg:text-[3rem] lg:leading-[1.02] lg:tracking-[-0.03em] xl:text-[3.5rem] 2xl:text-[3.85rem]">
-                    Tu cancha asegurada antes de salir.
-                  </h2>
-
-                  <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-white/80 sm:text-[16.5px]">
-                    Recibe tu pase digital de entrada con código QR y entra
-                    directo a jugar.
-                  </p>
-
-                  <div className="mt-6 flex justify-center">
-                    <Link
-                      href={SITE_CONFIG.routes.explore}
-                      className="cta-pure-btn inline-flex min-h-[48px] items-center justify-center gap-2.5 rounded-full bg-white px-6 py-3 text-[14.5px] font-semibold text-[#070B14] transition-colors duration-300 hover:bg-[#2563EB] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white sm:min-h-[50px] sm:px-7 sm:text-[15px]"
-                    >
-                      <span>Ver canchas disponibles</span>
-                      <CtaArrowIcon />
-                    </Link>
-                  </div>
                 </div>
               ) : null}
             </div>

@@ -151,7 +151,7 @@ export function BallDisassemblySection({
     };
   }, []);
 
-  /* Lazy-buffer del balón (15 MB): mientras el usuario está en el Hero (scroll 0),
+  /* Lazy-buffer del balón (-final +faststart): mientras el usuario está en el Hero (scroll 0),
      NO descarga ni instancia decodificadores H.264 en paralelo. Se activa con rootMargin '700px 0px'. */
   useEffect(() => {
     if (isBallMediaActivated) return;

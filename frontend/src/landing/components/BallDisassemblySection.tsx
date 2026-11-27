@@ -11,8 +11,9 @@ const FALLBACK_BALL_DURATION_SEC = 15.416667;
 const MOBILE_SEEK_MIN_INTERVAL_MS = 36;
 const MOBILE_SEEK_MIN_DELTA_SEC = 0.03;
 const MOBILE_SCRUB_LERP = 0.2;
-const DESKTOP_SCRUB_LERP = 0.17;
-const DESKTOP_SEEK_MIN_DELTA_SEC = 0.018;
+const DESKTOP_SCRUB_LERP = 0.18;
+const DESKTOP_SEEK_MIN_INTERVAL_MS = 34;
+const DESKTOP_SEEK_MIN_DELTA_SEC = 0.025;
 
 type ViewportMediaVariant = "mobile" | "desktop";
 
@@ -92,6 +93,7 @@ export function BallDisassemblySection({
   const renderedTimeRef = useRef(0);
   const videoFatalErrorRef = useRef(false);
   const isNearViewportRef = useRef(false);
+  const canUseBallVideoRef = useRef(false);
 
   const [mediaVariant, setMediaVariant] = useState<ViewportMediaVariant | null>(
     null
@@ -102,6 +104,7 @@ export function BallDisassemblySection({
   const [isVideoFrameReady, setIsVideoFrameReady] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [isStudioWhite, setIsStudioWhite] = useState(false);
+  const [isBallMediaActivated, setIsBallMediaActivated] = useState(false);
 
   /* Detección adaptativa real (móvil <= 767px o pointer: coarse vs desktop) + Save-Data + reduced-motion */
   useEffect(() => {
@@ -146,14 +149,52 @@ export function BallDisassemblySection({
     };
   }, []);
 
+  /* Lazy-buffer del balón (15 MB): mientras el usuario está en el Hero (scroll 0),
+     NO descarga ni instancia decodificadores H.264 en paralelo. Se activa con rootMargin '700px 0px'. */
+  useEffect(() => {
+    if (isBallMediaActivated) return;
+    const sectionEl = sectionRef.current;
+    if (!sectionEl) return;
+
+    if (typeof IntersectionObserver === "undefined") {
+      const rafId = window.requestAnimationFrame(() => {
+        setIsBallMediaActivated(true);
+      });
+      return () => window.cancelAnimationFrame(rafId);
+    }
+
+    const preloadObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setIsBallMediaActivated(true);
+          preloadObserver.disconnect();
+        }
+      },
+      { rootMargin: "700px 0px" }
+    );
+
+    preloadObserver.observe(sectionEl);
+
+    return () => {
+      preloadObserver.disconnect();
+    };
+  }, [isBallMediaActivated]);
+
   const shouldLoadVideo =
-    mediaVariant !== null && !saveDataMode && !hasVideoError;
+    mediaVariant !== null &&
+    isBallMediaActivated &&
+    !saveDataMode &&
+    !hasVideoError;
 
   const resolvedVideoSrc = shouldLoadVideo
     ? isMobileOrTouch || mediaVariant === "mobile"
       ? SITE_CONFIG.media.ballMobileMp4
       : SITE_CONFIG.media.ballDesktopMp4
     : undefined;
+
+  useEffect(() => {
+    canUseBallVideoRef.current = Boolean(resolvedVideoSrc);
+  }, [resolvedVideoSrc]);
 
   const handleVideoError = useCallback(() => {
     if (!resolvedVideoSrc) return;
@@ -218,6 +259,121 @@ export function BallDisassemblySection({
     };
   }, [reducedMotion, mediaVariant, resolvedVideoSrc]);
 
+  /* Hidratación diferida del <video> del balón: solo corre cuando el usuario se acerca (700px) */
+  useEffect(() => {
+    if (reducedMotion || !mediaVariant || !resolvedVideoSrc) return;
+
+    const video = videoRef.current;
+    if (!video) return;
+
+    let ballFrameReadyFlag = false;
+    let hasPrimedInteraction = false;
+
+    const markBallFrameReady = () => {
+      if (ballFrameReadyFlag || videoFatalErrorRef.current) return;
+      ballFrameReadyFlag = true;
+      setIsVideoFrameReady(true);
+    };
+
+    const onVideoSeeked = () => {
+      if (!video || videoFatalErrorRef.current) return;
+      if (video.readyState >= 2) {
+        markBallFrameReady();
+        video.removeEventListener("seeked", onVideoSeeked);
+      }
+    };
+
+    const onVideoLoadedData = () => {
+      if (!video || videoFatalErrorRef.current) return;
+      video.pause();
+      const maxTime = Math.max(
+        0,
+        (video.duration || FALLBACK_BALL_DURATION_SEC) - 0.04
+      );
+      const syncedTime = Math.min(
+        maxTime,
+        Math.max(0, playheadRef.current.progress * maxTime)
+      );
+      renderedTimeRef.current = syncedTime;
+      setIsStudioWhite(playheadRef.current.progress >= 0.22);
+
+      try {
+        video.currentTime = syncedTime;
+        if (video.readyState >= 2) {
+          markBallFrameReady();
+        }
+      } catch {
+        /* Reintentará en el siguiente ciclo de scroll */
+      }
+    };
+
+    video.defaultMuted = true;
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute("muted", "");
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "true");
+    video.setAttribute("x5-playsinline", "true");
+    video.addEventListener("seeked", onVideoSeeked);
+    video.addEventListener("loadeddata", onVideoLoadedData);
+    video.load();
+
+    const removeInteractionPrimers = () => {
+      window.removeEventListener("touchstart", unlockBallVideo);
+      window.removeEventListener("pointerdown", unlockBallVideo);
+    };
+
+    function unlockBallVideo() {
+      if (hasPrimedInteraction) return;
+      hasPrimedInteraction = true;
+      removeInteractionPrimers();
+
+      if (!video || videoFatalErrorRef.current) return;
+      if (video.readyState >= 2 && ballFrameReadyFlag) return;
+
+      video.muted = true;
+      const snapshotTime = renderedTimeRef.current || 0;
+
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            video.pause();
+            if (video.readyState >= 2) {
+              video.currentTime = snapshotTime;
+              markBallFrameReady();
+            }
+          })
+          .catch(() => {
+            if (video.readyState >= 2) {
+              try {
+                video.currentTime = snapshotTime;
+              } catch {
+                /* Mantiene poster HD si el entorno restringe decodificación */
+              }
+            }
+          });
+      }
+    }
+
+    if (isMobileOrTouch) {
+      window.addEventListener("touchstart", unlockBallVideo, {
+        passive: true,
+        once: true,
+      });
+      window.addEventListener("pointerdown", unlockBallVideo, {
+        passive: true,
+        once: true,
+      });
+    }
+
+    return () => {
+      video.removeEventListener("seeked", onVideoSeeked);
+      video.removeEventListener("loadeddata", onVideoLoadedData);
+      removeInteractionPrimers();
+    };
+  }, [reducedMotion, mediaVariant, isMobileOrTouch, resolvedVideoSrc]);
+
   /* Motor principal de scroll-scrubbing GPU (pin: false) sobre blanco puro #FFFFFF (cero capa gris intermedia) */
   useEffect(() => {
     const sectionEl = sectionRef.current;
@@ -226,13 +382,10 @@ export function BallDisassemblySection({
     gsap.registerPlugin(ScrollTrigger);
     ScrollTrigger.config({ ignoreMobileResize: true });
 
-    const video = videoRef.current;
-    const canUseVideo = Boolean(video && resolvedVideoSrc);
-
     let lastMobileSeekMs = 0;
+    let lastDesktopSeekMs = 0;
     let mobileSettledExactApplied = false;
     let desktopSettledExactApplied = false;
-    let hasPrimedInteraction = false;
     let studioWhiteFlag = false;
 
     const updateStudioWhiteFlag = (nextWhite: boolean) => {
@@ -245,7 +398,7 @@ export function BallDisassemblySection({
       const v = videoRef.current;
       if (
         !v ||
-        !canUseVideo ||
+        !canUseBallVideoRef.current ||
         videoFatalErrorRef.current ||
         v.readyState < 2 ||
         !Number.isFinite(v.duration) ||
@@ -263,14 +416,17 @@ export function BallDisassemblySection({
 
       const applyExactSeek = () => {
         if (
+          v.readyState < 2 ||
           v.seeking ||
-          Math.abs(exactDesiredTime - v.currentTime) <= 0.01
+          Math.abs(exactDesiredTime - v.currentTime) <= 0.012
         ) {
           mobileSettledExactApplied = true;
           desktopSettledExactApplied = true;
           return;
         }
-        lastMobileSeekMs = performance.now();
+        const now = performance.now();
+        lastMobileSeekMs = now;
+        lastDesktopSeekMs = now;
         v.currentTime = exactDesiredTime;
         mobileSettledExactApplied = true;
         desktopSettledExactApplied = true;
@@ -476,90 +632,6 @@ export function BallDisassemblySection({
       }
     }, sectionEl);
 
-    const onVideoSeeked = () => {
-      if (!video || videoFatalErrorRef.current) return;
-      if (video.readyState >= 2) {
-        setIsVideoFrameReady(true);
-      }
-    };
-
-    const onVideoLoadedData = () => {
-      if (!video || videoFatalErrorRef.current) return;
-      video.pause();
-      const maxTime = Math.max(
-        0,
-        (video.duration || FALLBACK_BALL_DURATION_SEC) - 0.04
-      );
-      const syncedTime = Math.min(
-        maxTime,
-        Math.max(0, playheadRef.current.progress * maxTime)
-      );
-      renderedTimeRef.current = syncedTime;
-      updateStudioWhiteFlag(playheadRef.current.progress >= 0.22);
-
-      try {
-        lastMobileSeekMs = performance.now();
-        video.currentTime = syncedTime;
-        if (syncedTime === 0 && video.readyState >= 2) {
-          setIsVideoFrameReady(true);
-        }
-      } catch {
-        /* Reintentará en el siguiente ciclo de scroll */
-      }
-    };
-
-    if (video && canUseVideo) {
-      video.defaultMuted = true;
-      video.muted = true;
-      video.playsInline = true;
-      video.setAttribute("muted", "");
-      video.setAttribute("playsinline", "");
-      video.setAttribute("webkit-playsinline", "true");
-      video.setAttribute("x5-playsinline", "true");
-      video.addEventListener("seeked", onVideoSeeked);
-      video.addEventListener("loadeddata", onVideoLoadedData);
-      video.load();
-    }
-
-    const removeInteractionPrimers = () => {
-      window.removeEventListener("touchstart", unlockBallVideo);
-      window.removeEventListener("pointerdown", unlockBallVideo);
-      window.removeEventListener("wheel", unlockBallVideo);
-    };
-
-    function unlockBallVideo() {
-      if (hasPrimedInteraction) return;
-      hasPrimedInteraction = true;
-      removeInteractionPrimers();
-
-      if (!video || !canUseVideo || videoFatalErrorRef.current) return;
-      video.muted = true;
-      const snapshotTime = renderedTimeRef.current || 0;
-
-      const playPromise = video.play();
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            video.pause();
-            if (video.readyState >= 2) {
-              lastMobileSeekMs = performance.now();
-              video.currentTime = snapshotTime;
-              setIsVideoFrameReady(true);
-            }
-          })
-          .catch(() => {
-            if (video.readyState >= 2) {
-              try {
-                lastMobileSeekMs = performance.now();
-                video.currentTime = snapshotTime;
-              } catch {
-                /* Mantiene poster HD si el entorno restringe decodificación */
-              }
-            }
-          });
-      }
-    }
-
     const onMobileTouchRelease = () => {
       mobileSettledExactApplied = false;
     };
@@ -572,18 +644,6 @@ export function BallDisassemblySection({
         passive: true,
       });
     }
-    window.addEventListener("touchstart", unlockBallVideo, {
-      passive: true,
-      once: true,
-    });
-    window.addEventListener("pointerdown", unlockBallVideo, {
-      passive: true,
-      once: true,
-    });
-    window.addEventListener("wheel", unlockBallVideo, {
-      passive: true,
-      once: true,
-    });
 
     const syncBallFrame = () => {
       if (!isNearViewportRef.current) return;
@@ -591,7 +651,7 @@ export function BallDisassemblySection({
       const v = videoRef.current;
       if (
         !v ||
-        !canUseVideo ||
+        !canUseBallVideoRef.current ||
         videoFatalErrorRef.current ||
         v.readyState < 2 ||
         !Number.isFinite(v.duration) ||
@@ -641,7 +701,7 @@ export function BallDisassemblySection({
         return;
       }
 
-      /* Rama Escritorio sincronizada con Lenis + GSAP ticker (guarda >= 0.018s y settle exacto) */
+      /* Rama Escritorio sincronizada con Lenis + GSAP ticker (throttle ~34ms / ~29Hz y settle limpio) */
       const isDesktopSettled = Math.abs(delta) <= 0.004;
       if (!isDesktopSettled) {
         desktopSettledExactApplied = false;
@@ -654,18 +714,22 @@ export function BallDisassemblySection({
         maxTime,
         Math.max(0, renderedTimeRef.current)
       );
+      const nowMs = performance.now();
       const diffFromVideo = Math.abs(targetTime - v.currentTime);
 
       if (!isDesktopSettled) {
         if (
           v.readyState >= 2 &&
           !v.seeking &&
+          nowMs - lastDesktopSeekMs >= DESKTOP_SEEK_MIN_INTERVAL_MS &&
           diffFromVideo >= DESKTOP_SEEK_MIN_DELTA_SEC
         ) {
+          lastDesktopSeekMs = nowMs;
           v.currentTime = targetTime;
         }
-      } else if (!desktopSettledExactApplied && !v.seeking) {
-        if (diffFromVideo >= 0.008) {
+      } else if (!desktopSettledExactApplied && v.readyState >= 2 && !v.seeking) {
+        if (diffFromVideo >= 0.012) {
+          lastDesktopSeekMs = nowMs;
           v.currentTime = targetTime;
         }
         desktopSettledExactApplied = true;
@@ -675,17 +739,12 @@ export function BallDisassemblySection({
     gsap.ticker.add(syncBallFrame);
 
     return () => {
-      if (video) {
-        video.removeEventListener("seeked", onVideoSeeked);
-        video.removeEventListener("loadeddata", onVideoLoadedData);
-      }
       window.removeEventListener("touchend", onMobileTouchRelease);
       window.removeEventListener("touchcancel", onMobileTouchRelease);
-      removeInteractionPrimers();
       gsap.ticker.remove(syncBallFrame);
       ctx.revert();
     };
-  }, [reducedMotion, mediaVariant, isMobileOrTouch, resolvedVideoSrc]);
+  }, [reducedMotion, mediaVariant, isMobileOrTouch]);
 
   const activePoster =
     mediaVariant === "mobile"
@@ -835,7 +894,7 @@ export function BallDisassemblySection({
                   onError={handleVideoError}
                   aria-hidden="true"
                   {...INLINE_WEBVIEW_VIDEO_ATTRS}
-                  className={`pointer-events-none h-full w-full object-contain object-center select-none ${
+                  className={`hero-gpu-video pointer-events-none h-full w-full object-contain object-center select-none ${
                     hasVideoError || saveDataMode ? "hidden" : ""
                   }`}
                 />
@@ -860,7 +919,7 @@ export function BallDisassemblySection({
                     src={SITE_CONFIG.media.ballDesktopPoster}
                     alt=""
                     aria-hidden="true"
-                    loading="eager"
+                    loading="lazy"
                     decoding="async"
                     className="h-full w-full object-contain object-center"
                   />

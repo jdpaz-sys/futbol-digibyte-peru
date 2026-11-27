@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import gsap from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
 
 interface HeaderScrollState {
   isScrolled: boolean;
@@ -17,44 +19,62 @@ export function useScrollThreshold(
   });
 
   useEffect(() => {
-    let ticking = false;
+    gsap.registerPlugin(ScrollTrigger);
 
-    const evaluate = () => {
-      const nextScrolled = window.scrollY > thresholdPx;
-      const lightEl = document.getElementById(lightSectionId);
+    let scrolledFlag = window.scrollY > thresholdPx;
+    let lightFlag = false;
 
-      /* Entra a cristal claro en el instante exacto en que el borde blanco #FFFFFF cruza el navbar (44px)
-         y vuelve a cristal oscuro cuando el velo ascendente #070B14 alcanza la franja superior */
-      let nextLight = false;
-      if (lightEl) {
-        const rect = lightEl.getBoundingClientRect();
-        const veilReachesHeaderPx = Math.round(window.innerHeight * 0.54);
-        nextLight = rect.top <= 44 && rect.bottom > veilReachesHeaderPx;
-      }
-
+    const commitState = () => {
       setState((prev) =>
-        prev.isScrolled === nextScrolled &&
-        prev.isOnLightSurface === nextLight
+        prev.isScrolled === scrolledFlag &&
+        prev.isOnLightSurface === lightFlag
           ? prev
-          : { isScrolled: nextScrolled, isOnLightSurface: nextLight }
+          : { isScrolled: scrolledFlag, isOnLightSurface: lightFlag }
       );
-      ticking = false;
     };
 
-    const onScroll = () => {
-      if (!ticking) {
-        window.requestAnimationFrame(evaluate);
-        ticking = true;
-      }
-    };
+    const scrolledTrigger = ScrollTrigger.create({
+      start: thresholdPx + 1,
+      end: "max",
+      onToggle: (self) => {
+        if (scrolledFlag === self.isActive) return;
+        scrolledFlag = self.isActive;
+        commitState();
+      },
+      onRefresh: (self) => {
+        scrolledFlag = self.isActive;
+        commitState();
+      },
+    });
 
-    evaluate();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll, { passive: true });
+    /* Entra a cristal claro en el instante exacto en que el borde blanco #FFFFFF cruza el navbar (44px)
+       y vuelve a cristal oscuro cuando el velo ascendente #070B14 alcanza la franja superior (54%).
+       Cero lecturas de getBoundingClientRect() durante el scroll. */
+    const lightEl = document.getElementById(lightSectionId);
+    const lightTrigger = lightEl
+      ? ScrollTrigger.create({
+          trigger: lightEl,
+          start: "top 44px",
+          end: "bottom 54%",
+          onToggle: (self) => {
+            if (lightFlag === self.isActive) return;
+            lightFlag = self.isActive;
+            commitState();
+          },
+          onRefresh: (self) => {
+            lightFlag = self.isActive;
+            commitState();
+          },
+        })
+      : null;
+
+    scrolledFlag = scrolledTrigger.isActive;
+    lightFlag = lightTrigger ? lightTrigger.isActive : false;
+    commitState();
 
     return () => {
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
+      scrolledTrigger.kill();
+      lightTrigger?.kill();
     };
   }, [thresholdPx, lightSectionId]);
 

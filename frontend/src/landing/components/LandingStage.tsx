@@ -32,6 +32,7 @@ export function LandingStage() {
     if (isCoarsePointer) return;
 
     const lenis = new Lenis({
+      autoRaf: false,
       smoothWheel: true,
       syncTouch: false,
       wheelMultiplier: 1.05,
@@ -43,11 +44,12 @@ export function LandingStage() {
 
     lenis.on("scroll", ScrollTrigger.update);
 
+    /* Prioridad alta (true): Lenis actualiza scroll antes que timelines y scrubbing en el mismo frame */
     const onGsapTick = (timeSeconds: number) => {
       lenis.raf(timeSeconds * 1000);
     };
 
-    gsap.ticker.add(onGsapTick);
+    gsap.ticker.add(onGsapTick, false, true);
     gsap.ticker.lagSmoothing(0);
 
     return () => {

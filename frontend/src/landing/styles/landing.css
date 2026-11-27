@@ -83,41 +83,64 @@ html.lenis body {
   height: 100svh;
 }
 
-/* Navbar azul marino neutro (#0F172A) translúcido (cero tinte violeta/índigo ni saturate) */
+/* Promoción limpia de capa GPU para <video> 1:1 (cero scale, cero blur, cero filtros) */
+.hero-gpu-video {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/* Aislamiento de capa GPU para el navbar flotante sobre video en movimiento */
+.header-gpu-layer {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/* Navbar azul marino neutro (#0F172A) translúcido GPU-friendly (máx. 10px blur, cero saturate) */
 .header-glass-dark {
-  background-color: rgba(15, 23, 42, 0.72);
+  background-color: rgba(15, 23, 42, 0.76);
   box-shadow: 0 8px 24px -8px rgba(7, 11, 20, 0.36);
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .header-glass-light {
   background-color: rgba(255, 255, 255, 0.92);
   box-shadow: 0 10px 28px -10px rgba(7, 11, 20, 0.1);
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .header-cta-glass-dark {
   border-color: rgba(255, 255, 255, 0.15);
   background-color: rgba(255, 255, 255, 0.08);
   color: #FFFFFF;
+  transform: translateZ(0);
 }
 
-@supports ((-webkit-backdrop-filter: blur(24px)) or (backdrop-filter: blur(24px))) {
+@supports ((-webkit-backdrop-filter: blur(10px)) or (backdrop-filter: blur(10px))) {
   .header-glass-dark {
-    background-color: rgba(15, 23, 42, 0.35);
-    -webkit-backdrop-filter: blur(24px);
-    backdrop-filter: blur(24px);
+    background-color: rgba(15, 23, 42, 0.48);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
   }
 
   .header-glass-light {
-    background-color: rgba(255, 255, 255, 0.65);
-    -webkit-backdrop-filter: blur(24px);
-    backdrop-filter: blur(24px);
+    background-color: rgba(255, 255, 255, 0.76);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
   }
 
   .header-cta-glass-dark {
     border-color: rgba(255, 255, 255, 0.15);
     background-color: rgba(255, 255, 255, 0.06);
-    -webkit-backdrop-filter: blur(12px);
-    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+  }
+
+  /* Evita doble backdrop-filter anidado cuando el pill superior ya aplica el cristal */
+  .header-glass-dark .header-cta-glass-dark {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 
@@ -135,14 +158,36 @@ html.lenis body {
     rgba(7, 11, 20, 0.22) 46%,
     rgba(7, 11, 20, 0) 100%
   );
+  transform: translateZ(0);
 }
 
-/* Sombra óptica limpia para textos sobre el césped iluminado */
+/* Sombra óptica limpia en móvil; en desktop (pointer: fine) legibilidad 100% vía degradado estático sin filtros en letras */
 .hero-copy-clarity {
   text-shadow: 0 2px 22px rgba(7, 11, 20, 0.42);
 }
 
-/* Titulares editoriales del Hero EXCLUSIVOS en PC (>= 1024px): móvil (< lg) 100% intacto */
+@media (min-width: 768px) and (pointer: fine) {
+  .hero-bottom-veil {
+    background: linear-gradient(
+      0deg,
+      rgba(7, 11, 20, 0.64) 0%,
+      rgba(7, 11, 20, 0.28) 48%,
+      rgba(7, 11, 20, 0) 100%
+    );
+  }
+
+  .hero-copy-clarity {
+    text-shadow: none;
+  }
+
+  .hero-pc-act-layer {
+    backface-visibility: hidden;
+    will-change: transform, opacity;
+  }
+}
+
+/* Titulares editoriales del Hero EXCLUSIVOS en PC (>= 1024px): móvil (< lg) 100% intacto.
+   CERO filter: drop-shadow sobre background-clip: text encima de <video> para evitar repaints de GPU. */
 @media (min-width: 1024px) {
   .hero-pc-title-primary {
     color: #FFFFFF;
@@ -167,7 +212,6 @@ html.lenis body {
       background-clip: text;
       color: transparent;
       -webkit-text-fill-color: transparent;
-      filter: drop-shadow(0 4px 20px rgba(7, 11, 20, 0.46));
     }
 
     .hero-pc-title-secondary {
@@ -184,7 +228,6 @@ html.lenis body {
       background-clip: text;
       color: transparent;
       -webkit-text-fill-color: transparent;
-      filter: drop-shadow(0 4px 20px rgba(7, 11, 20, 0.44));
     }
   }
 }
@@ -246,11 +289,11 @@ html.lenis body {
   }
 }
 
-/* Contador 1 -> 100 grande, grueso y con gradiente blanco -> gris plata elegante */
+/* Contador 1 -> 100 grande, grueso y con gradiente blanco -> gris plata elegante (cero filter: drop-shadow) */
 .hero-counter-inner {
   opacity: 1;
   transform: translate3d(0, 0, 0);
-  filter: drop-shadow(0 8px 26px rgba(7, 11, 20, 0.56));
+  backface-visibility: hidden;
   transition:
     opacity 320ms cubic-bezier(0.22, 1, 0.36, 1),
     transform 360ms cubic-bezier(0.22, 1, 0.36, 1);

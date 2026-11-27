@@ -22,7 +22,7 @@ export const SITE_CONFIG = {
   },
   media: {
     logo: "/media/logo-digibyte-futbol.png",
-    heroDesktopMp4: "/media/hero-cancha-desktop-v3.mp4",
+    heroDesktopMp4: "/media/hero-cancha-desktop-v4.mp4",
     heroDesktopPoster: "/media/hero-poster-desktop-v3.webp",
     heroMobileMp4: "/media/hero-cancha-mobile-v3.mp4",
     heroMobilePoster: "/media/hero-poster-mobile-v3.webp",

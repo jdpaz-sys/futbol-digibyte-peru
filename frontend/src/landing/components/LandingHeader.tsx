@@ -23,16 +23,16 @@ export function LandingHeader({ onScrollToSection }: LandingHeaderProps) {
 
   return (
     <header
-      className={`fixed inset-x-0 top-0 z-40 px-3.5 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] sm:px-6 lg:px-10 ${
-        isScrolled ? "pt-2.5 sm:pt-3.5" : "pt-3.5 sm:pt-5"
+      className={`fixed inset-x-0 top-0 z-40 px-3.5 pt-3.5 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] sm:px-6 sm:pt-5 lg:px-10 ${
+        isScrolled ? "-translate-y-1 sm:-translate-y-1.5" : "translate-y-0"
       }`}
     >
       <div
-        className={`mx-auto flex max-w-7xl items-center justify-between gap-2 transition-all duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        className={`header-gpu-layer mx-auto flex max-w-7xl items-center justify-between gap-2 transition-[background-color,border-color,box-shadow] duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${
           isOnLightSurface
-            ? "header-glass-light rounded-full border border-[#0F172A]/10 bg-white/65 px-3.5 py-2 backdrop-blur-xl sm:px-5 sm:py-2.5"
+            ? "header-glass-light rounded-full border border-[#0F172A]/10 bg-white/75 px-3.5 py-2 backdrop-blur-md sm:px-5 sm:py-2.5"
             : isScrolled
-              ? "header-glass-dark rounded-full border border-white/15 bg-[#0F172A]/35 px-3.5 py-2 backdrop-blur-xl sm:px-5 sm:py-2.5"
+              ? "header-glass-dark rounded-full border border-white/15 bg-[#0F172A]/48 px-3.5 py-2 backdrop-blur-md sm:px-5 sm:py-2.5"
               : "rounded-full border border-transparent bg-transparent px-1.5 py-1.5 sm:px-2"
         }`}
       >

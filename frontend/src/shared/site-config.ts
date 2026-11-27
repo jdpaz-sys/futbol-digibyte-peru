@@ -21,14 +21,10 @@ export const SITE_CONFIG = {
   },
   media: {
     logo: "/media/logo-digibyte-futbol.png",
-    heroDesktopWebm: "/media/hero-cancha-desktop.webm",
-    heroDesktopMp4: "/media/hero-cancha-desktop.mp4",
-    heroDesktopPoster: "/media/hero-poster-desktop.webp",
-    heroMobileWebm: "/media/hero-cancha-mobile.webm",
-    heroMobileMp4: "/media/hero-cancha-mobile.mp4",
-    heroMobilePoster: "/media/hero-poster-mobile.webp",
-    ballVideo: "/media/balon-desarme.mp4",
-    ballPoster: "/media/balon-poster.jpg",
+    heroDesktopMp4: "/media/hero-cancha-desktop-v2.mp4",
+    heroDesktopPoster: "/media/hero-poster-desktop-v2.webp",
+    heroMobileMp4: "/media/hero-cancha-mobile-v2.mp4",
+    heroMobilePoster: "/media/hero-poster-mobile-v2.webp",
   },
   commercialWhatsapp: {
     phone: COMMERCIAL_WHATSAPP_PHONE,

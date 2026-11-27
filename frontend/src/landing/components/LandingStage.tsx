@@ -22,12 +22,18 @@ export function LandingStage() {
     if (prefersReducedMotion) return;
 
     gsap.registerPlugin(ScrollTrigger);
+    ScrollTrigger.config({ ignoreMobileResize: true });
+
+    /* En pantallas táctiles (pointer: coarse) corre el scroll nativo a 120Hz sin Lenis */
+    const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
+    if (isCoarsePointer) return;
 
     const lenis = new Lenis({
       smoothWheel: true,
       syncTouch: false,
+      wheelMultiplier: 1.05,
       touchMultiplier: 1,
-      lerp: 0.1,
+      lerp: 0.11,
     });
     lenisRef.current = lenis;
     lenis.scrollTo(window.scrollY, { immediate: true, force: true });

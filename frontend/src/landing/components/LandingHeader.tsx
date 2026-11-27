@@ -17,9 +17,9 @@ export function LandingHeader() {
       <div
         className={`mx-auto flex max-w-7xl items-center justify-between gap-2 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
           isOnLightSurface
-            ? "rounded-full border border-[#070B14]/10 bg-white/88 px-3.5 py-2 shadow-[0_12px_32px_-12px_rgba(7,11,20,0.08)] backdrop-blur-md sm:px-5 sm:py-2.5"
+            ? "header-glass-light rounded-full border border-[#0F172A]/10 bg-white/65 px-3.5 py-2 backdrop-blur-xl backdrop-saturate-150 sm:px-5 sm:py-2.5"
             : isScrolled
-              ? "rounded-full border border-white/12 bg-[#070B14]/72 px-3.5 py-2 backdrop-blur-md sm:px-5 sm:py-2.5"
+              ? "header-glass-dark rounded-full border border-white/15 bg-[#0F172A]/25 px-3.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_8px_28px_rgba(7,11,20,0.14)] backdrop-blur-xl backdrop-saturate-150 sm:px-5 sm:py-2.5"
               : "rounded-full border border-transparent bg-transparent px-1.5 py-1.5 sm:px-2"
         }`}
       >
@@ -64,10 +64,10 @@ export function LandingHeader() {
 
           <Link
             href={SITE_CONFIG.routes.explore}
-            className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[12.5px] font-semibold whitespace-nowrap backdrop-blur-md transition-colors duration-300 focus-visible:outline-2 focus-visible:outline-offset-4 sm:min-h-[40px] sm:px-4.5 sm:py-2 sm:text-sm ${
+            className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[12.5px] font-semibold whitespace-nowrap transition-colors duration-300 focus-visible:outline-2 focus-visible:outline-offset-4 sm:min-h-[40px] sm:px-4.5 sm:py-2 sm:text-sm ${
               isOnLightSurface
                 ? "border-[#070B14]/15 bg-[#070B14] text-white hover:border-[#2563EB] hover:bg-[#2563EB] focus-visible:outline-[#070B14]"
-                : "border-white/20 bg-white/10 text-white hover:border-white hover:bg-white hover:text-[#070B14] focus-visible:outline-white/70"
+                : "header-cta-glass-dark border-white/25 bg-white/12 text-white hover:border-white hover:bg-white hover:text-[#070B14] focus-visible:outline-white/70"
             }`}
           >
             <span>Abrir App</span>

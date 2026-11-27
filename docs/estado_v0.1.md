@@ -1,6 +1,6 @@
 # Estado del Proyecto — Fútbol Digibyte Perú (v0.1)
 
-- **Fase actual:** **Fase 4A.1 100% cerrada** (`v0.4a1-landing-hero-final` en `develop`) — **Backend 100% cerrado** (`v0.3-backend-100`). Lista para iniciar **Fase 4A.2**.
+- **Fase actual:** **Fase 4A.1 + Transición Editorial de Salida del Hero 100% cerradas** en `develop` — **Backend 100% cerrado** (`v0.3-backend-100`). Lista para iniciar **Fase 4A.2**.
 - **Autor:** Juan David Paz Pastor (Digibyte Perú)
 - **Última actualización:** 2026-11-26
 - **Autoría Git:** `jdpaz-sys` (rama activa: `develop`)
@@ -23,7 +23,7 @@
 - **Fase 3A — `reservas` (Jugador + Storage + Worker):** `LocalFileStorage` privado, disponibilidad/cotizador mixto RN-08/RN-09, Hold GIST (`23P01` -> `409`), comprobante manual (`POR_VALIDAR`), mis reservas/evidencia ACL y worker de expiración 30s (`FOR UPDATE SKIP LOCKED`).
 - **Fase 3B — `reservas` (Dueño + Notificaciones/Push) y `reportes`:** agenda `/api/v1/dueno/reservas` con `alerta_demora` >30 min, aprobar/rechazar, externas/bloqueos GIST, lector QR, check-in/No-Show, cancelaciones/reprogramación, `/api/v1/notificaciones` + push y `GET /api/v1/dueno/reportes/resumen`.
 - **Fase 3C — Cierre Operativo del Backend:** galería `/dueno/fotos`, foto de cancha, QR Yape/Plin y `GET /api/v1/public/media/*`; invalidación Valkey por slug; perfil/contraseña auth; worker CU-14 cada 5 min; Web Push VAPID opcional y CORS listo para Next.js.
-- **Fase 4A.1 — Base Frontend, Hero HD y Blindaje Cross-Device (`/`):** Next.js 16 + `pnpm`, separación estricta `src/landing/` vs `src/webapp/` (`gsap`/`lenis` 100% aislados; Lenis omitido en `pointer: coarse` 120Hz), videos H.264 High `bt709` `+faststart` (`hero-cancha-desktop-v2.mp4` 1080p CRF 17 y `hero-cancha-mobile-v2.mp4` 720x1280 CRF 18) con reposo en I-frame exacto `2.50s`, escenario GPU `sticky` `100lvh`/`100svh` (`170svh` móvil / `235vh–245vh` PC), fallback Save-Data/Low-Power, HTTP 206 Range y Navbar glass translúcido.
+- **Fase 4A.1 — Base Frontend, Hero HD, Blindaje Cross-Device y Salida Editorial (`/`):** Next.js 16 + `pnpm`, separación estricta `src/landing/` vs `src/webapp/` (`gsap`/`lenis` 100% aislados; Lenis omitido en `pointer: coarse` 120Hz), videos H.264 High `bt709` `+faststart` (`hero-cancha-desktop-v2.mp4` 1080p CRF 17 y `hero-cancha-mobile-v2.mp4` 720x1280 CRF 18) con reposo en I-frame exacto `2.50s`, escenario GPU `sticky` `100lvh`/`100svh` (`170svh` móvil / `235vh–245vh` PC), tipografía editorial PC con gradiente blanco-plata, transición reversible de salida (`HeroExitTransition` con velo ascendente `#070B14` e iluminación progresiva por palabras), fallback Save-Data/Low-Power, HTTP 206 Range y Navbar glass marino neutro (`#0F172A`/35).
 
 ## Siguiente Paso Exacto (En Chat Nuevo)
 

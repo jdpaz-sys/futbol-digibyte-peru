@@ -134,6 +134,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
   const act1Ref = useRef<HTMLDivElement | null>(null);
   const act2Ref = useRef<HTMLDivElement | null>(null);
   const act3Ref = useRef<HTMLDivElement | null>(null);
+  const exitParallaxRef = useRef<HTMLDivElement | null>(null);
 
   const modeRef = useRef<"intro" | "scrub">("intro");
   const playheadRef = useRef({ progress: 0 });
@@ -292,6 +293,8 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     };
 
     const estimatedTrackEndPx = getFallbackTrackScrollEndPx();
+    const estimatedLowerThresholdPx =
+      estimatedTrackEndPx + Math.round(window.innerHeight * 0.45);
     const savedState = readSavedScrollState();
     const initialBrowserScrollY = window.scrollY;
     const reloadedDocument = !hasMountedLandingInSpa && isDocumentReload();
@@ -299,7 +302,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     const isReloadInLowerSection =
       reloadedDocument &&
       (savedState?.zone === "lower" ||
-        (!savedState && initialBrowserScrollY > estimatedTrackEndPx + 24));
+        (!savedState && initialBrowserScrollY > estimatedLowerThresholdPx));
 
     const savedOffsetAfterPin =
       savedState?.zone === "lower"
@@ -312,6 +315,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     let revealDelayTimer: ReturnType<typeof setTimeout> | undefined;
     let scrollTriggerInstance: ScrollTrigger | null = null;
     let isListeningScrollSave = false;
+    let hasPrimedInteraction = false;
     let hasNativeVideoAdvanced = false;
     let lastMobileSeekMs = 0;
     let settledExactSeekApplied = false;
@@ -527,6 +531,28 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
               0.68
             );
           }
+
+          /* Salida cinematográfica reversible: mientras el velo #070B14 asciende, el cierre del Hero flota y se disuelve */
+          if (exitParallaxRef.current) {
+            gsap.set(exitParallaxRef.current, { opacity: 1, y: 0 });
+            gsap.fromTo(
+              exitParallaxRef.current,
+              { opacity: 1, y: 0 },
+              {
+                opacity: 0,
+                y: isDesktop ? -36 : -24,
+                ease: "none",
+                immediateRender: false,
+                scrollTrigger: {
+                  trigger: trackEl,
+                  start: "bottom bottom",
+                  end: isDesktop ? "bottom 42%" : "bottom 46%",
+                  scrub: isDesktop && !isMobileOrTouch ? 0.28 : 0.2,
+                  invalidateOnRefresh: true,
+                },
+              }
+            );
+          }
         }
       );
     }, trackEl);
@@ -646,6 +672,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       );
 
       onImmediateScroll(targetScrollY);
+      ScrollTrigger.refresh();
       ScrollTrigger.update();
 
       const setFinalVideoFrame = () => {
@@ -664,11 +691,14 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
           /* Poster permanece visible si el seek inicial no está disponible */
         }
         ScrollTrigger.refresh();
-        const updatedTrackEnd =
-          scrollTriggerInstance?.end ?? getFallbackTrackScrollEndPx();
-        onImmediateScroll(
-          Math.round(updatedTrackEnd + Math.max(28, savedOffsetAfterPin))
-        );
+        if (!hasPrimedInteraction) {
+          const updatedTrackEnd =
+            scrollTriggerInstance?.end ?? getFallbackTrackScrollEndPx();
+          onImmediateScroll(
+            Math.round(updatedTrackEnd + Math.max(28, savedOffsetAfterPin))
+          );
+          ScrollTrigger.update();
+        }
       };
 
       if (video && canUseVideo) {
@@ -718,8 +748,10 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
 
       const activeTrackEnd =
         scrollTriggerInstance?.end ?? getFallbackTrackScrollEndPx();
+      const lowerZoneThresholdPx =
+        activeTrackEnd + Math.round(window.innerHeight * 0.45);
 
-      if (window.scrollY > activeTrackEnd + 24) {
+      if (window.scrollY > lowerZoneThresholdPx) {
         writeSavedScrollState({
           zone: "lower",
           offsetAfterPin: Math.round(window.scrollY - activeTrackEnd),
@@ -730,7 +762,6 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     };
 
     /* Listener único multi-dispositivo (touchstart / pointerdown / wheel) para priming seguro */
-    let hasPrimedInteraction = false;
     const removeInteractionPrimers = () => {
       window.removeEventListener("touchstart", unlockVideoOnFirstInteraction);
       window.removeEventListener("pointerdown", unlockVideoOnFirstInteraction);
@@ -1097,17 +1128,20 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
             data-revealed={isContentRevealed ? "true" : "false"}
             className="hero-stage-reveal relative z-10 mx-auto flex h-full w-full max-w-7xl flex-col justify-end px-6 pb-[max(2.25rem,env(safe-area-inset-bottom))] sm:px-8 lg:px-12 lg:pb-12 xl:pb-14"
           >
-            <div className="grid w-full grid-cols-1 grid-rows-1 items-end">
+            <div
+              ref={exitParallaxRef}
+              className="grid w-full grid-cols-1 grid-rows-1 items-end"
+            >
               {/* ACTO 1 */}
               <div
                 ref={act1Ref}
-                className="hero-copy-clarity col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center lg:mx-0 lg:max-w-2xl lg:items-start lg:text-left"
+                className="hero-copy-clarity col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center lg:mx-0 lg:max-w-[30rem] lg:items-start lg:text-left xl:max-w-[34rem]"
               >
-                <h1 className="font-display text-[clamp(1.95rem,4.4vw,3.75rem)] leading-[0.99] font-bold tracking-[-0.032em]">
-                  <span className="block text-white">
+                <h1 className="font-display text-[clamp(1.95rem,4.4vw,3.75rem)] leading-[0.99] font-bold tracking-[-0.032em] lg:text-[3rem] lg:leading-[1.02] lg:tracking-[-0.03em] xl:text-[3.5rem] 2xl:text-[3.85rem]">
+                  <span className="hero-pc-title-primary block text-white">
                     Separa tu cancha en segundos.
                   </span>
-                  <span className="mt-1 block text-white/75">
+                  <span className="hero-pc-title-secondary mt-1 block text-white/75 lg:mt-1.5">
                     Sin esperar por WhatsApp.
                   </span>
                 </h1>
@@ -1135,9 +1169,9 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
               {!reducedMotion ? (
                 <div
                   ref={act2Ref}
-                  className="hero-copy-clarity invisible col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center opacity-0"
+                  className="hero-copy-clarity invisible col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center opacity-0 lg:max-w-3xl xl:max-w-4xl"
                 >
-                  <h2 className="font-display text-[clamp(1.85rem,4.1vw,3.3rem)] leading-[1.01] font-bold tracking-[-0.032em] text-white">
+                  <h2 className="hero-pc-title-primary font-display text-[clamp(1.85rem,4.1vw,3.3rem)] leading-[1.01] font-bold tracking-[-0.032em] text-white lg:text-[3rem] lg:leading-[1.02] lg:tracking-[-0.03em] xl:text-[3.5rem] 2xl:text-[3.85rem]">
                     Congela tu turno al instante.
                   </h2>
 
@@ -1151,9 +1185,9 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
               {!reducedMotion ? (
                 <div
                   ref={act3Ref}
-                  className="hero-copy-clarity invisible col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center opacity-0"
+                  className="hero-copy-clarity invisible col-start-1 row-start-1 mx-auto flex w-full max-w-xl flex-col items-center text-center opacity-0 lg:max-w-3xl xl:max-w-4xl"
                 >
-                  <h2 className="font-display text-[clamp(1.85rem,4.1vw,3.3rem)] leading-[1.01] font-bold tracking-[-0.032em] text-white">
+                  <h2 className="hero-pc-title-primary font-display text-[clamp(1.85rem,4.1vw,3.3rem)] leading-[1.01] font-bold tracking-[-0.032em] text-white lg:text-[3rem] lg:leading-[1.02] lg:tracking-[-0.03em] xl:text-[3.5rem] 2xl:text-[3.85rem]">
                     Llega directo con tu QR.
                   </h2>
 

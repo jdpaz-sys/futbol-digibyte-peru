@@ -55,45 +55,41 @@ html.lenis body {
   height: 100svh;
 }
 
-/* Glassmorphism ligero del Header con -webkit-backdrop-filter y respaldo legible */
+/* Navbar azul marino neutro (#0F172A) translúcido (cero tinte violeta/índigo ni saturate) */
 .header-glass-dark {
-  background-color: rgba(15, 23, 42, 0.52);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    0 8px 28px rgba(7, 11, 20, 0.14);
+  background-color: rgba(15, 23, 42, 0.72);
+  box-shadow: 0 8px 24px -8px rgba(7, 11, 20, 0.36);
 }
 
 .header-glass-light {
-  background-color: rgba(255, 255, 255, 0.88);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.72),
-    0 10px 28px -10px rgba(15, 23, 42, 0.08);
+  background-color: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 28px -10px rgba(7, 11, 20, 0.1);
 }
 
 .header-cta-glass-dark {
-  border-color: rgba(255, 255, 255, 0.25);
-  background-color: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.15);
+  background-color: rgba(255, 255, 255, 0.08);
   color: #FFFFFF;
 }
 
 @supports ((-webkit-backdrop-filter: blur(24px)) or (backdrop-filter: blur(24px))) {
   .header-glass-dark {
-    background-color: rgba(15, 23, 42, 0.25);
-    -webkit-backdrop-filter: blur(24px) saturate(150%);
-    backdrop-filter: blur(24px) saturate(150%);
+    background-color: rgba(15, 23, 42, 0.35);
+    -webkit-backdrop-filter: blur(24px);
+    backdrop-filter: blur(24px);
   }
 
   .header-glass-light {
-    background-color: rgba(255, 255, 255, 0.65);
-    -webkit-backdrop-filter: blur(24px) saturate(150%);
-    backdrop-filter: blur(24px) saturate(150%);
+    background-color: rgba(255, 255, 255, 0.85);
+    -webkit-backdrop-filter: blur(24px);
+    backdrop-filter: blur(24px);
   }
 
   .header-cta-glass-dark {
-    border-color: rgba(255, 255, 255, 0.25);
-    background-color: rgba(255, 255, 255, 0.12);
-    -webkit-backdrop-filter: blur(16px) saturate(140%);
-    backdrop-filter: blur(16px) saturate(140%);
+    border-color: rgba(255, 255, 255, 0.15);
+    background-color: rgba(255, 255, 255, 0.06);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
   }
 }
 
@@ -116,6 +112,110 @@ html.lenis body {
 /* Sombra óptica limpia para textos sobre el césped iluminado */
 .hero-copy-clarity {
   text-shadow: 0 2px 22px rgba(7, 11, 20, 0.42);
+}
+
+/* Titulares editoriales del Hero EXCLUSIVOS en PC (>= 1024px): móvil (< lg) 100% intacto */
+@media (min-width: 1024px) {
+  .hero-pc-title-primary {
+    color: #FFFFFF;
+  }
+
+  .hero-pc-title-secondary {
+    color: #E2E8F0;
+  }
+
+  @supports ((-webkit-background-clip: text) or (background-clip: text)) {
+    .hero-pc-title-primary {
+      padding-block: 0.06em;
+      margin-block: -0.06em;
+      text-shadow: none;
+      background-image: linear-gradient(
+        180deg,
+        #FFFFFF 0%,
+        #F8FAFC 42%,
+        #94A3B8 100%
+      );
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 4px 20px rgba(7, 11, 20, 0.46));
+    }
+
+    .hero-pc-title-secondary {
+      padding-block: 0.06em;
+      margin-block: -0.06em;
+      text-shadow: none;
+      background-image: linear-gradient(
+        180deg,
+        #E2E8F0 0%,
+        #CBD5E1 46%,
+        #64748B 100%
+      );
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 4px 20px rgba(7, 11, 20, 0.44));
+    }
+  }
+}
+
+/* Transición cinematográfica de salida del Hero -> Escena editorial en #070B14 */
+.hero-exit-track {
+  height: 140vh;
+  height: 140svh;
+}
+
+@media (min-width: 768px) {
+  .hero-exit-track {
+    height: 175vh;
+  }
+}
+
+.hero-exit-feather {
+  height: 40vh;
+  transform-origin: bottom center;
+  will-change: transform;
+  background: linear-gradient(
+    180deg,
+    rgba(7, 11, 20, 0) 0%,
+    rgba(7, 11, 20, 0.18) 22%,
+    rgba(7, 11, 20, 0.42) 40%,
+    rgba(7, 11, 20, 0.65) 55%,
+    rgba(7, 11, 20, 0.88) 78%,
+    #070B14 100%
+  );
+}
+
+@media (min-width: 768px) {
+  .hero-exit-feather {
+    height: 44vh;
+  }
+}
+
+.hero-exit-word {
+  display: inline-block;
+  padding-block: 0.08em;
+  margin-block: -0.08em;
+  color: #F8FAFC;
+  opacity: 0.18;
+  will-change: opacity;
+}
+
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .hero-exit-word {
+    background-image: linear-gradient(
+      180deg,
+      #FFFFFF 0%,
+      #F1F5F9 48%,
+      #CBD5E1 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
 }
 
 /* Contador 1 -> 100 grande, grueso y con gradiente blanco -> gris plata elegante */
@@ -236,5 +336,30 @@ html.lenis body {
     opacity: 1 !important;
     transform: none !important;
     pointer-events: auto !important;
+  }
+
+  .hero-exit-track {
+    height: auto !important;
+    min-height: 76vh;
+    min-height: 76svh;
+  }
+
+  .hero-exit-track .hero-sticky-stage,
+  .hero-exit-track .hero-safe-ui-layer {
+    position: relative;
+    height: auto;
+    min-height: 76vh;
+    min-height: 76svh;
+  }
+
+  .hero-exit-feather {
+    height: 12vh;
+    transform: none !important;
+    will-change: auto;
+  }
+
+  .hero-exit-word {
+    opacity: 1 !important;
+    will-change: auto;
   }
 }

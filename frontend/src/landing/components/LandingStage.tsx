@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Lenis from "lenis";
+import { HeroExitTransition } from "@/landing/components/HeroExitTransition";
 import { HeroSection } from "@/landing/components/HeroSection";
 import { LandingHeader } from "@/landing/components/LandingHeader";
 
@@ -67,6 +68,8 @@ export function LandingStage() {
 
       <main>
         <HeroSection onImmediateScroll={syncImmediateScroll} />
+
+        <HeroExitTransition />
 
         {/* Sección blanca (#FFFFFF) lista para conectar con Fase 4A.2 y validar recarga inferior */}
         <section

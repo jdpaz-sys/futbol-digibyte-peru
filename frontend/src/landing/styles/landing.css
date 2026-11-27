@@ -23,11 +23,11 @@ html.lenis body {
   min-height: 100svh;
 }
 
-/* Hero móvil/táctil (225svh): autoplay fluido en bucle + cascada de 3 frases al hacer scroll;
+/* Hero móvil/táctil (100lvh): autoplay fluido en bucle + cascada de 3 frases sincronizada con el video;
    Hero escritorio (pointer: fine >= 768px): pista de scroll-scrubbing cinematográfico */
 .hero-scroll-track {
-  height: 225vh;
-  height: 225svh;
+  height: 100vh;
+  height: 100lvh;
 }
 
 @media (min-width: 768px) and (pointer: fine) {
@@ -43,8 +43,8 @@ html.lenis body {
 }
 
 .hero-touch-track {
-  height: 225vh;
-  height: 225svh;
+  height: 100vh;
+  height: 100lvh;
 }
 
 @keyframes heroMobileScrollDotDrop {

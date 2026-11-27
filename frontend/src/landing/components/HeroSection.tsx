@@ -266,10 +266,10 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
 
   /* =========================================================================
      RAMA 1 — MÓVIL / TÁCTIL (< 768px o pointer: coarse):
-     Video en autoplay fluido en loop SIN scroll-scrubbing (cero temblores),
-     pausa inteligente con IntersectionObserver, contador 1 -> 100 al cargar,
-     cascada interpolada de las 3 frases al hacer scroll (225svh) y señal
-     discreta que se desvanece suavemente al bajar (> 24px).
+     Escenario limpio de 1 sola pantalla (100lvh/100svh), autoplay fluido en loop
+     SIN scroll-scrubbing (cero temblores), cascada interpolada de las 3 frases
+     sincronizada automáticamente con la reproducción del video, pausa inteligente
+     con IntersectionObserver y señal discreta que se desvanece al bajar (> 24px).
      ========================================================================= */
   useEffect(() => {
     const trackEl = trackRef.current;
@@ -285,35 +285,31 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     const video = videoRef.current;
     const canUseVideo = Boolean(video && resolvedVideoSrc);
 
-    const getMobileTrackScrollEndPx = () => {
-      const measured = trackEl.offsetHeight - window.innerHeight;
-      if (measured > 60) return Math.round(measured);
-      return Math.round(window.innerHeight * 1.25);
-    };
-
-    const estimatedTrackEndPx = getMobileTrackScrollEndPx();
-    const estimatedLowerThresholdPx =
-      estimatedTrackEndPx + Math.round(window.innerHeight * 0.45);
     const savedState = readSavedScrollState();
     const initialBrowserScrollY = window.scrollY;
     const reloadedDocument = !hasMountedLandingInSpa && isDocumentReload();
+    const lowerThresholdPx = Math.round(window.innerHeight * 0.45);
 
     const isReloadInLowerSection =
       reloadedDocument &&
       (savedState?.zone === "lower" ||
-        (!savedState && initialBrowserScrollY > estimatedLowerThresholdPx));
+        (!savedState && initialBrowserScrollY > lowerThresholdPx));
 
-    const savedOffsetAfterPin =
+    const savedOffsetAfterHero =
       savedState?.zone === "lower"
         ? savedState.offsetAfterPin
-        : Math.max(28, initialBrowserScrollY - estimatedTrackEndPx);
+        : Math.max(28, initialBrowserScrollY);
 
     let revealDelayTimer: ReturnType<typeof setTimeout> | undefined;
-    let mobileScrollTrigger: ScrollTrigger | null = null;
+    let activeActTween: gsap.core.Timeline | null = null;
     let isListeningScrollSave = false;
     let isHeroIntersecting = true;
     let hasNativeVideoAdvanced = false;
     let mobileCueHiddenFlag = false;
+    let currentActIndex = 0;
+    let hasEnteredSecondActOnce = false;
+    let syntheticLoopSec = INTRO_END_TIME;
+    let lastPhraseSampleMs = performance.now();
     const introBootClock = performance.now();
 
     let clockFallbackState = {
@@ -334,6 +330,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
     const completeMobileIntro = (immediate = false) => {
       if (introFinishedRef.current) return;
       introFinishedRef.current = true;
+      lastPhraseSampleMs = performance.now();
       setCounterValue(100);
       setIsCounterVisible(false);
 
@@ -346,75 +343,97 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       }
     };
 
-    /* Cascada interpolada de los 3 actos en GPU (solo transform + opacity) sobre el video fluido */
+    const transitionToMobileAct = (nextIndex: number) => {
+      if (nextIndex === currentActIndex) return;
+      const actNodes = [act1Ref.current, act2Ref.current, act3Ref.current];
+      const prevEl = actNodes[currentActIndex];
+      const nextEl = actNodes[nextIndex];
+      if (!nextEl) return;
+
+      currentActIndex = nextIndex;
+      activeActTween?.kill();
+
+      actNodes.forEach((node, idx) => {
+        if (node && idx !== nextIndex && node !== prevEl) {
+          gsap.set(node, { autoAlpha: 0, y: 20 });
+        }
+      });
+
+      const switchTl = gsap.timeline();
+      if (prevEl) {
+        switchTl.to(
+          prevEl,
+          {
+            autoAlpha: 0,
+            y: -18,
+            duration: 0.42,
+            ease: "power2.inOut",
+          },
+          0
+        );
+      }
+
+      switchTl.fromTo(
+        nextEl,
+        { autoAlpha: 0, y: 20 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.48,
+          ease: "power2.out",
+        },
+        0.3
+      );
+
+      activeActTween = switchTl;
+    };
+
+    /* Sincroniza la cascada Acto 1 -> Acto 2 -> Acto 3 -> Acto 1 con el tiempo real del video (12.83s) */
+    const syncMobilePhraseWithPlayback = () => {
+      const now = performance.now();
+      const dt = Math.min(0.5, Math.max(0, (now - lastPhraseSampleMs) / 1000));
+      lastPhraseSampleMs = now;
+
+      if (!isHeroIntersecting || !introFinishedRef.current) return;
+
+      let playbackSec: number;
+      if (
+        video &&
+        canUseVideo &&
+        !videoFatalErrorRef.current &&
+        !video.paused &&
+        video.readyState >= 2
+      ) {
+        playbackSec = video.currentTime;
+        syntheticLoopSec = playbackSec;
+      } else {
+        syntheticLoopSec = (syntheticLoopSec + dt) % 12.833333;
+        playbackSec = syntheticLoopSec;
+      }
+
+      let targetAct: number;
+      if (playbackSec >= 5.75 && playbackSec < 9.55) {
+        hasEnteredSecondActOnce = true;
+        targetAct = 1;
+      } else if (
+        playbackSec >= 9.55 ||
+        (hasEnteredSecondActOnce && playbackSec < 1.15)
+      ) {
+        targetAct = 2;
+      } else {
+        targetAct = 0;
+      }
+
+      transitionToMobileAct(targetAct);
+    };
+
+    /* Estado inicial de los 3 actos + parallax suave de salida al subir el velo #070B14 */
     const ctx = gsap.context(() => {
       gsap.set(act1Ref.current, { autoAlpha: 1, y: 0 });
       gsap.set([act2Ref.current, act3Ref.current], {
         autoAlpha: 0,
-        y: 22,
+        y: 20,
       });
-
-      const tl = gsap.timeline({
-        defaults: { ease: "none" },
-        scrollTrigger: {
-          trigger: trackEl,
-          start: "top top",
-          end: "bottom bottom",
-          pin: false,
-          scrub: 0.16,
-          invalidateOnRefresh: true,
-        },
-      });
-
-      mobileScrollTrigger = tl.scrollTrigger ?? null;
-
-      tl.to(
-        act1Ref.current,
-        {
-          autoAlpha: 0,
-          y: -20,
-          duration: 0.1,
-          ease: "power2.inOut",
-        },
-        0.16
-      );
-
-      tl.fromTo(
-        act2Ref.current,
-        { autoAlpha: 0, y: 22 },
-        {
-          autoAlpha: 1,
-          y: 0,
-          duration: 0.09,
-          ease: "power2.out",
-        },
-        0.32
-      );
-      tl.to(
-        act2Ref.current,
-        {
-          autoAlpha: 0,
-          y: -20,
-          duration: 0.09,
-          ease: "power2.inOut",
-        },
-        0.54
-      );
-
-      tl.fromTo(
-        act3Ref.current,
-        { autoAlpha: 0, y: 22 },
-        {
-          autoAlpha: 1,
-          y: 0,
-          duration: 0.09,
-          ease: "power2.out",
-        },
-        0.69
-      );
-
-      /* Meseta final legible del Acto 3 (0.78 -> 1.00) antes del velo de salida */
-      tl.to({}, { duration: 0.22 }, 0.78);
 
       if (exitParallaxRef.current) {
         gsap.set(exitParallaxRef.current, { opacity: 1, y: 0 });
@@ -490,8 +509,14 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       video.setAttribute("x5-playsinline", "true");
       video.addEventListener("playing", onVideoPlaying);
       video.addEventListener("loadeddata", onVideoLoadedData);
+      video.addEventListener("timeupdate", syncMobilePhraseWithPlayback);
       video.load();
     }
+
+    const phraseSyncTimer = window.setInterval(
+      syncMobilePhraseWithPlayback,
+      180
+    );
 
     /* IntersectionObserver (threshold: 0.05): pausa automática al salir de vista y reanuda al volver */
     const heroVisibilityObserver = new IntersectionObserver(
@@ -499,6 +524,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
         const entry = entries[0];
         if (!entry) return;
         isHeroIntersecting = entry.isIntersecting;
+        lastPhraseSampleMs = performance.now();
         if (!video || !canUseVideo || videoFatalErrorRef.current) return;
 
         if (!entry.isIntersecting) {
@@ -520,9 +546,7 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       setIsCounterVisible(false);
       setIsContentRevealed(true);
       setHasScrolledPastMobileCue(true);
-      const trackEnd =
-        mobileScrollTrigger?.end ?? getMobileTrackScrollEndPx();
-      onImmediateScroll(Math.round(trackEnd + Math.max(28, savedOffsetAfterPin)));
+      onImmediateScroll(Math.round(savedOffsetAfterHero));
       ScrollTrigger.refresh();
       ScrollTrigger.update();
     };
@@ -562,14 +586,10 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
       }
 
       if (!isListeningScrollSave) return;
-      const activeTrackEnd =
-        mobileScrollTrigger?.end ?? getMobileTrackScrollEndPx();
-      const lowerZoneThresholdPx =
-        activeTrackEnd + Math.round(window.innerHeight * 0.45);
-      if (y > lowerZoneThresholdPx) {
+      if (y > lowerThresholdPx) {
         writeSavedScrollState({
           zone: "lower",
-          offsetAfterPin: Math.round(y - activeTrackEnd),
+          offsetAfterPin: Math.round(y),
         });
       } else {
         writeSavedScrollState({ zone: "hero", offsetAfterPin: 0 });
@@ -643,11 +663,14 @@ export function HeroSection({ onImmediateScroll }: HeroSectionProps) {
 
     return () => {
       window.cancelAnimationFrame(enableTrackingRaf);
+      window.clearInterval(phraseSyncTimer);
       if (revealDelayTimer) clearTimeout(revealDelayTimer);
+      activeActTween?.kill();
       heroVisibilityObserver.disconnect();
       if (video) {
         video.removeEventListener("playing", onVideoPlaying);
         video.removeEventListener("loadeddata", onVideoLoadedData);
+        video.removeEventListener("timeupdate", syncMobilePhraseWithPlayback);
       }
       window.removeEventListener("scroll", onMobileScroll);
       window.removeEventListener("pagehide", onMobileScroll);
